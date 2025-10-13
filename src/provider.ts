@@ -65,7 +65,14 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		options: { silent: boolean },
 		_token: CancellationToken
 	): Promise<LanguageModelChatInformation[]> {
-		const authConfig = await this.getAuthConfig(options.silent);
+		return this.provideLanguageModelChatInformation(options, _token);
+	}
+
+	async provideLanguageModelChatInformation(
+		options: { silent: boolean },
+		_token: CancellationToken
+	): Promise<LanguageModelChatInformation[]> {
+		const authConfig = await this.getAuthConfig(options.silent ?? false);
 		if (!authConfig) {
 			return [];
 		}
@@ -108,6 +115,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				id: hasInferenceProfile ? inferenceProfileId : m.modelId,
 				name: m.modelName,
 				tooltip: `AWS Bedrock - ${m.providerName}${hasInferenceProfile ? ' (Cross-Region)' : ''}`,
+				detail: `${m.providerName} • ${hasInferenceProfile ? 'Multi-Region' : region}`,
 				family: "bedrock",
 				version: "1.0.0",
 				maxInputTokens: maxInput,
@@ -126,13 +134,6 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		}));
 
 		return infos;
-	}
-
-	async provideLanguageModelChatInformation(
-		options: { silent: boolean },
-		_token: CancellationToken
-	): Promise<LanguageModelChatInformation[]> {
-		return this.prepareLanguageModelChatInformation({ silent: options.silent ?? false }, _token);
 	}
 
 	async provideLanguageModelChatResponse(
@@ -166,6 +167,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				const partTypes = msg.content.map(p => {
 					if (p instanceof vscode.LanguageModelTextPart) return 'text';
 					if (p instanceof vscode.LanguageModelToolCallPart) return 'toolCall';
+					if (typeof p === 'object' && p !== null && 'mimeType' in p && (p as any).mimeType?.startsWith('image/')) return 'image';
 					return 'toolResult';
 				});
 				logger.log(`[Bedrock Model Provider] Message ${idx} (${msg.role}):`, partTypes);
@@ -178,6 +180,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 			converted.messages.forEach((msg, idx) => {
 				const contentTypes = msg.content.map(c => {
 					if ('text' in c) return 'text';
+					if ('image' in c) return 'image';
 					if ('toolUse' in c) return 'toolUse';
 					return 'toolResult';
 				});

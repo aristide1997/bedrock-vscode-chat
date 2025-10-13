@@ -21,7 +21,16 @@ export interface BedrockToolResultBlock {
 	};
 }
 
-export type BedrockContentBlock = BedrockTextBlock | BedrockToolUseBlock | BedrockToolResultBlock;
+export interface BedrockImageBlock {
+	image: {
+		format: "png" | "jpeg" | "gif" | "webp";
+		source: {
+			bytes: Uint8Array;
+		};
+	};
+}
+
+export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock;
 
 /**
  * Bedrock Converse API message structure.

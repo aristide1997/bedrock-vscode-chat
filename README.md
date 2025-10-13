@@ -51,22 +51,6 @@ Supports:
 
 - **Manage AWS Bedrock Provider**: Configure authentication method and region
 
-### Supported Regions
-
-- US East (N. Virginia, Ohio)
-- US West (Oregon)
-- Asia Pacific (Mumbai, Tokyo, Seoul, Singapore, Sydney)
-- Canada (Central)
-- Europe (Frankfurt, Ireland, London, Paris)
-- South America (São Paulo)
-
-## Architecture
-
-- `src/extension.ts`: Extension activation, command registration, region/key management
-- `src/provider.ts`: Main provider implementing VS Code's LanguageModelChatProvider
-- `src/utils.ts`: Message/tool conversion utilities
-- `src/types.ts`: TypeScript definitions for Bedrock API types
-
 ## Development
 
 Common scripts:

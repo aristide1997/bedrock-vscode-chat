@@ -3,6 +3,7 @@ import type {
 	BedrockMessage,
 	BedrockContentBlock,
 	BedrockTextBlock,
+	BedrockImageBlock,
 	BedrockToolUseBlock,
 	BedrockToolResultBlock,
 	BedrockSystemBlock,
@@ -48,6 +49,7 @@ export function convertMessages(
 	for (let i = 0; i < messages.length; i++) {
 		const m = messages[i];
 		const textParts: string[] = [];
+		const imageBlocks: BedrockImageBlock[] = [];
 		const toolCalls: BedrockToolUseBlock[] = [];
 		const toolResults: BedrockToolResultBlock[] = [];
 
@@ -58,6 +60,26 @@ export function convertMessages(
 					textParts.push(part.value);
 				} else {
 					systemBlocks.push({ text: part.value });
+				}
+			} else if (typeof part === 'object' && part !== null && 'mimeType' in part && 'data' in part) {
+				const dataPart = part as { mimeType: string; data: Uint8Array };
+				if (dataPart.mimeType.startsWith('image/')) {
+					const mimeTypeParts = dataPart.mimeType.split('/');
+					const format = mimeTypeParts[1]?.toLowerCase();
+
+					if (format === 'png' || format === 'jpeg' || format === 'gif' || format === 'webp') {
+						imageBlocks.push({
+							image: {
+								format: format as "png" | "jpeg" | "gif" | "webp",
+								source: {
+									bytes: dataPart.data,
+								},
+							},
+						});
+						logger.log(`[Message Converter] Added image block with format: ${format}`);
+					} else {
+						logger.warn(`[Message Converter] Unsupported image format: ${format}`);
+					}
 				}
 			} else if (part instanceof vscode.LanguageModelToolCallPart) {
 				toolCalls.push({
@@ -101,6 +123,7 @@ export function convertMessages(
 			if (combinedText) {
 				content.push({ text: combinedText });
 			}
+			content.push(...imageBlocks);
 			content.push(...toolCalls);
 			bedrockMessages.push({ role: "assistant", content });
 			emittedAssistantToolCall = true;
@@ -121,11 +144,21 @@ export function convertMessages(
 		}
 
 		const text = textParts.join("");
-		if (text && !emittedAssistantToolCall && toolResults.length === 0) {
+		if ((text || imageBlocks.length > 0) && !emittedAssistantToolCall && toolResults.length === 0) {
 			if (m.role === vscode.LanguageModelChatMessageRole.User) {
-				bedrockMessages.push({ role: "user", content: [{ text }] });
+				const content: BedrockContentBlock[] = [];
+				if (text) {
+					content.push({ text });
+				}
+				content.push(...imageBlocks);
+				bedrockMessages.push({ role: "user", content });
 			} else if (m.role === vscode.LanguageModelChatMessageRole.Assistant) {
-				bedrockMessages.push({ role: "assistant", content: [{ text }] });
+				const content: BedrockContentBlock[] = [];
+				if (text) {
+					content.push({ text });
+				}
+				content.push(...imageBlocks);
+				bedrockMessages.push({ role: "assistant", content });
 			}
 		}
 	}
@@ -133,13 +166,6 @@ export function convertMessages(
 	if (pendingToolResults.length > 0) {
 		bedrockMessages.push({ role: "user", content: pendingToolResults });
 	}
-
-	logger.log("[Message Converter] === DETAILED MESSAGE DUMP ===");
-	bedrockMessages.forEach((msg, idx) => {
-		logger.log(`[Message Converter] Message ${idx} (${msg.role}):`);
-		logger.log(JSON.stringify(msg, null, 2));
-	});
-	logger.log("[Message Converter] === END MESSAGE DUMP ===");
 
 	return { messages: bedrockMessages, system: systemBlocks };
 }
