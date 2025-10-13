@@ -91,3 +91,20 @@ export interface ToolCallBuffer {
 	name?: string;
 	args: string;
 }
+
+/**
+ * Authentication method for AWS Bedrock.
+ */
+export type AuthMethod = 'api-key' | 'profile' | 'access-keys';
+
+/**
+ * Authentication configuration for AWS Bedrock.
+ */
+export interface AuthConfig {
+	method: AuthMethod;
+	apiKey?: string;
+	profile?: string;
+	accessKeyId?: string;
+	secretAccessKey?: string;
+	sessionToken?: string;
+}

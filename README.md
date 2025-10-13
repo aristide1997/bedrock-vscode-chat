@@ -6,13 +6,19 @@ Integrates AWS Bedrock foundation models into GitHub Copilot Chat for VS Code.
 
 ## Quick Start
 
-1. Install the extension from the VS Code Marketplace
-2. Generate a Bedrock API key following the [AWS Bedrock API Keys documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
-3. Open VS Code Command Palette (`Cmd+Shift+P` or `Ctrl+Shift+P`)
-4. Run `Manage AWS Bedrock Provider`
-5. Select "Set API Key" and paste your Bedrock API key
-6. Select "Set Region" and choose your AWS region (default: `us-east-1`)
-7. Open GitHub Copilot Chat and select any Bedrock model from the model picker
+1. Install the extension
+2. Run `Manage AWS Bedrock Provider` from Command Palette
+3. Configure authentication (API key, AWS profile, or access keys)
+4. Set your AWS region (default: `us-east-1`)
+5. Select a Bedrock model in GitHub Copilot Chat
+
+## Authentication
+
+Three methods supported:
+
+- **API Key**: Generate from [AWS Console](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
+- **AWS Profile**: Use credentials from `~/.aws/credentials` (supports SSO)
+- **Access Keys**: Direct AWS access key ID and secret (supports session tokens)
 
 ## Why AWS Bedrock
 
@@ -43,7 +49,7 @@ Supports:
 
 ### Commands
 
-- **Manage AWS Bedrock Provider**: Configure API key and region
+- **Manage AWS Bedrock Provider**: Configure authentication method and region
 
 ### Supported Regions
 
@@ -82,7 +88,6 @@ Press F5 to launch an Extension Development Host.
 ## Limitations
 
 - Some models don't support streaming with tool calls simultaneously
-- API keys are short-lived (12 hours for console-generated keys)
 - Rate limits apply based on your AWS account settings
 
 ## Resources
