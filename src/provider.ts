@@ -15,6 +15,7 @@ import { convertMessages } from "./converters/messages";
 import { convertTools } from "./converters/tools";
 import { validateRequest } from "./validation";
 import { logger } from "./logger";
+import type { AuthConfig, AuthMethod } from "./types";
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_CONTEXT_LENGTH = 200000;
@@ -64,18 +65,35 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		options: { silent: boolean },
 		_token: CancellationToken
 	): Promise<LanguageModelChatInformation[]> {
-		const apiKey = await this.ensureApiKey(options.silent);
-		if (!apiKey) {
+		return this.provideLanguageModelChatInformation(options, _token);
+	}
+
+	async provideLanguageModelChatInformation(
+		options: { silent: boolean },
+		_token: CancellationToken
+	): Promise<LanguageModelChatInformation[]> {
+		const authConfig = await this.getAuthConfig(options.silent ?? false);
+		if (!authConfig) {
 			return [];
 		}
 
 		const region = this.globalState.get<string>("bedrock.region") ?? "us-east-1";
 		this.client.setRegion(region);
 
-		const [models, availableProfileIds] = await Promise.all([
-			this.client.fetchModels(apiKey),
-			this.client.fetchInferenceProfiles(apiKey),
-		]);
+		let models, availableProfileIds;
+		try {
+			[models, availableProfileIds] = await Promise.all([
+				this.client.fetchModels(authConfig),
+				this.client.fetchInferenceProfiles(authConfig),
+			]);
+		} catch (err) {
+			const errorMsg = err instanceof Error ? err.message : String(err);
+			logger.error("[Bedrock Model Provider] Failed to fetch models", err);
+			if (!options.silent) {
+				vscode.window.showErrorMessage(`Failed to fetch Bedrock models: ${errorMsg}`);
+			}
+			return [];
+		}
 
 		const infos: LanguageModelChatInformation[] = [];
 		const regionPrefix = region.split("-")[0];
@@ -97,6 +115,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				id: hasInferenceProfile ? inferenceProfileId : m.modelId,
 				name: m.modelName,
 				tooltip: `AWS Bedrock - ${m.providerName}${hasInferenceProfile ? ' (Cross-Region)' : ''}`,
+				detail: `${m.providerName} • ${hasInferenceProfile ? 'Multi-Region' : region}`,
 				family: "bedrock",
 				version: "1.0.0",
 				maxInputTokens: maxInput,
@@ -115,13 +134,6 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		}));
 
 		return infos;
-	}
-
-	async provideLanguageModelChatInformation(
-		options: { silent: boolean },
-		_token: CancellationToken
-	): Promise<LanguageModelChatInformation[]> {
-		return this.prepareLanguageModelChatInformation({ silent: options.silent ?? false }, _token);
 	}
 
 	async provideLanguageModelChatResponse(
@@ -145,9 +157,9 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		};
 
 		try {
-			const apiKey = await this.ensureApiKey(true);
-			if (!apiKey) {
-				throw new Error("Bedrock API key not found");
+			const authConfig = await this.getAuthConfig();
+			if (!authConfig) {
+				throw new Error("Bedrock authentication not configured");
 			}
 
 			logger.log("[Bedrock Model Provider] Converting messages, count:", messages.length);
@@ -155,6 +167,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				const partTypes = msg.content.map(p => {
 					if (p instanceof vscode.LanguageModelTextPart) return 'text';
 					if (p instanceof vscode.LanguageModelToolCallPart) return 'toolCall';
+					if (typeof p === 'object' && p !== null && 'mimeType' in p && (p as any).mimeType?.startsWith('image/')) return 'image';
 					return 'toolResult';
 				});
 				logger.log(`[Bedrock Model Provider] Message ${idx} (${msg.role}):`, partTypes);
@@ -167,6 +180,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 			converted.messages.forEach((msg, idx) => {
 				const contentTypes = msg.content.map(c => {
 					if ('text' in c) return 'text';
+					if ('image' in c) return 'image';
 					if ('toolUse' in c) return 'toolUse';
 					return 'toolResult';
 				});
@@ -220,17 +234,19 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 			}
 
 			logger.log("[Bedrock Model Provider] Starting streaming request");
-			const stream = await this.client.startConversationStream(apiKey, requestInput);
+			const stream = await this.client.startConversationStream(authConfig, requestInput);
 
 			logger.log("[Bedrock Model Provider] Processing stream events");
 			await this.streamProcessor.processStream(stream, trackingProgress, token);
 			logger.log("[Bedrock Model Provider] Finished processing stream");
 		} catch (err) {
+			const errorMsg = err instanceof Error ? err.message : String(err);
 			logger.error("[Bedrock Model Provider] Chat request failed", {
 				modelId: model.id,
 				messageCount: messages.length,
 				error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
 			});
+			vscode.window.showErrorMessage(`Bedrock chat request failed: ${errorMsg}`);
 			throw err;
 		}
 	}
@@ -253,20 +269,60 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		}
 	}
 
-	private async ensureApiKey(silent: boolean): Promise<string | undefined> {
-		let apiKey = await this.secrets.get("bedrock.apiKey");
-		if (!apiKey && !silent) {
-			const entered = await vscode.window.showInputBox({
-				title: "AWS Bedrock API Key",
-				prompt: "Enter your AWS Bedrock API key",
-				ignoreFocusOut: true,
-				password: true,
-			});
-			if (entered && entered.trim()) {
-				apiKey = entered.trim();
-				await this.secrets.store("bedrock.apiKey", apiKey);
+	private async getAuthConfig(silent: boolean = false): Promise<AuthConfig | undefined> {
+		const method = this.globalState.get<AuthMethod>("bedrock.authMethod") ?? "api-key";
+
+		if (method === "api-key") {
+			let apiKey = await this.secrets.get("bedrock.apiKey");
+			if (!apiKey && !silent) {
+				const entered = await vscode.window.showInputBox({
+					title: "AWS Bedrock API Key",
+					prompt: "Enter your AWS Bedrock API key",
+					ignoreFocusOut: true,
+					password: true,
+				});
+				if (entered && entered.trim()) {
+					apiKey = entered.trim();
+					await this.secrets.store("bedrock.apiKey", apiKey);
+				}
 			}
+			if (!apiKey) {
+				return undefined;
+			}
+			return { method: "api-key", apiKey };
 		}
-		return apiKey;
+
+		if (method === "profile") {
+			const profile = this.globalState.get<string>("bedrock.profile");
+			if (!profile) {
+				if (!silent) {
+					vscode.window.showErrorMessage("AWS profile not configured. Please run 'Manage AWS Bedrock Provider'.");
+				}
+				return undefined;
+			}
+			return { method: "profile", profile };
+		}
+
+		if (method === "access-keys") {
+			const accessKeyId = await this.secrets.get("bedrock.accessKeyId");
+			const secretAccessKey = await this.secrets.get("bedrock.secretAccessKey");
+			const sessionToken = await this.secrets.get("bedrock.sessionToken");
+
+			if (!accessKeyId || !secretAccessKey) {
+				if (!silent) {
+					vscode.window.showErrorMessage("AWS access keys not configured. Please run 'Manage AWS Bedrock Provider'.");
+				}
+				return undefined;
+			}
+
+			return {
+				method: "access-keys",
+				accessKeyId,
+				secretAccessKey,
+				...(sessionToken && { sessionToken }),
+			};
+		}
+
+		return undefined;
 	}
 }

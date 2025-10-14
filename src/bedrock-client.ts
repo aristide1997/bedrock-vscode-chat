@@ -4,7 +4,8 @@ import {
 	ConverseStreamCommand,
 	ConverseStreamCommandInput,
 } from "@aws-sdk/client-bedrock-runtime";
-import type { BedrockModelSummary } from "./types";
+import { fromIni } from "@aws-sdk/credential-providers";
+import type { BedrockModelSummary, AuthConfig } from "./types";
 import { logger } from "./logger";
 
 export class BedrockAPIClient {
@@ -18,12 +19,13 @@ export class BedrockAPIClient {
 		this.region = region;
 	}
 
-	async fetchModels(apiKey: string): Promise<BedrockModelSummary[]> {
+	async fetchModels(authConfig: AuthConfig): Promise<BedrockModelSummary[]> {
 		try {
-			process.env.AWS_BEARER_TOKEN_BEDROCK = apiKey;
+			const credentials = this.getCredentials(authConfig);
 
 			const client = new BedrockClient({
 				region: this.region,
+				credentials,
 			});
 
 			const command = new ListFoundationModelsCommand({});
@@ -47,12 +49,13 @@ export class BedrockAPIClient {
 		}
 	}
 
-	async fetchInferenceProfiles(apiKey: string): Promise<Set<string>> {
+	async fetchInferenceProfiles(authConfig: AuthConfig): Promise<Set<string>> {
 		try {
-			process.env.AWS_BEARER_TOKEN_BEDROCK = apiKey;
+			const credentials = this.getCredentials(authConfig);
 
 			const client = new BedrockClient({
 				region: this.region,
+				credentials,
 			});
 
 			const command = new ListInferenceProfilesCommand({});
@@ -73,13 +76,14 @@ export class BedrockAPIClient {
 	}
 
 	async startConversationStream(
-		apiKey: string,
+		authConfig: AuthConfig,
 		input: ConverseStreamCommandInput
 	): Promise<AsyncIterable<any>> {
-		process.env.AWS_BEARER_TOKEN_BEDROCK = apiKey;
+		const credentials = this.getCredentials(authConfig);
 
 		const client = new BedrockRuntimeClient({
 			region: this.region,
+			credentials,
 		});
 
 		const command = new ConverseStreamCommand(input);
@@ -90,5 +94,28 @@ export class BedrockAPIClient {
 		}
 
 		return response.stream;
+	}
+
+	private getCredentials(authConfig: AuthConfig) {
+		if (authConfig.method === 'api-key') {
+			process.env.AWS_BEARER_TOKEN_BEDROCK = authConfig.apiKey;
+			return undefined;
+		}
+
+		delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+
+		if (authConfig.method === 'profile') {
+			return fromIni({ profile: authConfig.profile });
+		}
+
+		if (authConfig.method === 'access-keys') {
+			return {
+				accessKeyId: authConfig.accessKeyId!,
+				secretAccessKey: authConfig.secretAccessKey!,
+				...(authConfig.sessionToken && { sessionToken: authConfig.sessionToken }),
+			};
+		}
+
+		return undefined;
 	}
 }

@@ -1,20 +1,24 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import { BedrockChatModelProvider } from "../provider";
+import { config } from "dotenv";
+
+// Load environment variables from .env file
+config();
 
 /**
  * Simple integration test that verifies Bedrock API works end-to-end.
- * Set AWS_BEARER_TOKEN_BEDROCK environment variable to run: AWS_BEARER_TOKEN_BEDROCK=your_key npm test
+ * Run with: npm test (automatically loads .env file)
  */
 suite("Bedrock Integration", () => {
-	const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
-
-	if (!apiKey) {
-		console.log("⚠️  Skipping integration tests - set AWS_BEARER_TOKEN_BEDROCK to run");
-		return;
-	}
-
 	test("End-to-end: list models, send message, get streaming response", async function () {
+		const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
+		if (!apiKey) {
+			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
+			this.skip();
+			return;
+		}
+
 		this.timeout(30000);
 
 		const provider = new BedrockChatModelProvider(
@@ -25,7 +29,11 @@ suite("Bedrock Integration", () => {
 				onDidChange: () => ({ dispose() {} }),
 			} as unknown as vscode.SecretStorage,
 			{
-				get: () => "us-east-1",
+				get: (key: string) => {
+					if (key === "bedrock.region") return "us-east-1";
+					if (key === "bedrock.authMethod") return "api-key";
+					return undefined;
+				},
 				update: async () => {},
 				keys: () => [],
 				setKeysForSync: () => {},
@@ -94,6 +102,13 @@ suite("Bedrock Integration", () => {
 	});
 
 	test("Tool calling: model calls calculator tool", async function () {
+		const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
+		if (!apiKey) {
+			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
+			this.skip();
+			return;
+		}
+
 		this.timeout(30000);
 
 		const provider = new BedrockChatModelProvider(
@@ -104,7 +119,11 @@ suite("Bedrock Integration", () => {
 				onDidChange: () => ({ dispose() {} }),
 			} as unknown as vscode.SecretStorage,
 			{
-				get: () => "us-east-1",
+				get: (key: string) => {
+					if (key === "bedrock.region") return "us-east-1";
+					if (key === "bedrock.authMethod") return "api-key";
+					return undefined;
+				},
 				update: async () => {},
 				keys: () => [],
 				setKeysForSync: () => {},
@@ -199,6 +218,73 @@ suite("Bedrock Integration", () => {
 		assert.equal(input.operation, "add", "Operation should be 'add'");
 		assert.equal(input.a, 15, "First number should be 15");
 		assert.equal(input.b, 27, "Second number should be 27");
+
+		// Step 5: Execute the tool
+		console.log("  → Executing tool...");
+		let result: number;
+		switch (input.operation) {
+			case "add":
+				result = input.a + input.b;
+				break;
+			case "subtract":
+				result = input.a - input.b;
+				break;
+			case "multiply":
+				result = input.a * input.b;
+				break;
+			case "divide":
+				result = input.a / input.b;
+				break;
+			default:
+				throw new Error(`Unknown operation: ${input.operation}`);
+		}
+		console.log(`  ✓ Calculated: ${input.a} ${input.operation} ${input.b} = ${result}`);
+		assert.equal(result, 42, "Result should be 42");
+
+		// Step 6: Send result back to LLM
+		console.log("  → Sending result back to LLM...");
+		const followUpMessages: vscode.LanguageModelChatMessage[] = [
+			...messages,
+			{
+				role: vscode.LanguageModelChatMessageRole.Assistant,
+				content: [toolCall],
+				name: undefined,
+			},
+			{
+				role: vscode.LanguageModelChatMessageRole.User,
+				content: [
+					new vscode.LanguageModelToolResultPart(
+						toolCall.callId,
+						[new vscode.LanguageModelTextPart(result.toString())]
+					)
+				],
+				name: undefined,
+			},
+		];
+
+		let finalResponse = "";
+		await provider.provideLanguageModelChatResponse(
+			claude,
+			followUpMessages,
+			{ tools },
+			{
+				report: (part) => {
+					if (part instanceof vscode.LanguageModelTextPart) {
+						finalResponse += part.value;
+					}
+				},
+			},
+			new vscode.CancellationTokenSource().token
+		);
+
+		console.log(`  ✓ Final response: "${finalResponse.trim()}"`);
+
+		// Step 7: Verify the complete round trip
+		assert.ok(finalResponse.length > 0, "Should receive final response");
+		assert.ok(
+			finalResponse.includes("42") || finalResponse.includes("forty-two") || finalResponse.includes("forty two"),
+			"Response should mention the correct answer (42)"
+		);
 
 		console.log("  ✓ Tool calling integration test PASSED");
 	});

@@ -21,7 +21,16 @@ export interface BedrockToolResultBlock {
 	};
 }
 
-export type BedrockContentBlock = BedrockTextBlock | BedrockToolUseBlock | BedrockToolResultBlock;
+export interface BedrockImageBlock {
+	image: {
+		format: "png" | "jpeg" | "gif" | "webp";
+		source: {
+			bytes: Uint8Array;
+		};
+	};
+}
+
+export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock;
 
 /**
  * Bedrock Converse API message structure.
@@ -90,4 +99,21 @@ export interface ToolCallBuffer {
 	id?: string;
 	name?: string;
 	args: string;
+}
+
+/**
+ * Authentication method for AWS Bedrock.
+ */
+export type AuthMethod = 'api-key' | 'profile' | 'access-keys';
+
+/**
+ * Authentication configuration for AWS Bedrock.
+ */
+export interface AuthConfig {
+	method: AuthMethod;
+	apiKey?: string;
+	profile?: string;
+	accessKeyId?: string;
+	secretAccessKey?: string;
+	sessionToken?: string;
 }
