@@ -20,30 +20,24 @@ Three methods supported:
 - **AWS Profile**: Use credentials from `~/.aws/credentials` (supports SSO)
 - **Access Keys**: Direct AWS access key ID and secret (supports session tokens)
 
-## Why AWS Bedrock
+## Features
 
-Direct AWS integration without third-party proxies:
-
-- Uses your existing AWS infrastructure and compliance setup
-- Native support for AWS IAM and security policies
-- Access to all Bedrock foundation models through a single API
-- Region selection for data residency requirements
-- Pay-as-you-go pricing through your AWS account
+- Multi-turn conversations
+- Streaming responses
+- Tool/function calling for compatible models
+- Vision/image input for compatible models (Claude models)
+- Support for all AWS regions
+- Cross-region inference profiles for optimized model access and routing
 
 ## Available Models
 
-The extension exposes all Bedrock foundation models with streaming capabilities:
+The extension exposes all Bedrock foundation models with streaming capabilities across all AWS regions:
 
 - Claude Sonnet 4.5
 - Claude Sonnet 4 / 3.7
 - Llama 3.1/3.2
 - Mistral Large
 - And more...
-
-Supports:
-- Multi-turn conversations
-- Streaming responses
-- Tool/function calling for compatible models
 
 ## Configuration
 
