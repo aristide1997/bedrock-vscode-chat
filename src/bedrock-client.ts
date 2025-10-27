@@ -75,6 +75,63 @@ export class BedrockAPIClient {
 		}
 	}
 
+	async fetchApplicationInferenceProfiles(authConfig: AuthConfig, foundationModels: BedrockModelSummary[]): Promise<BedrockModelSummary[]> {
+		try {
+			const credentials = this.getCredentials(authConfig);
+
+			const client = new BedrockClient({
+				region: this.region,
+				credentials,
+			});
+
+			const command = new ListInferenceProfilesCommand({
+				typeEquals: "APPLICATION",
+			});
+			const response = await client.send(command);
+
+			const profiles: BedrockModelSummary[] = [];
+			for (const profile of response.inferenceProfileSummaries ?? []) {
+				if (profile.inferenceProfileId && profile.status === "ACTIVE") {
+					// Extract foundation model identifier from the first model in the profile
+					let matchedModel: BedrockModelSummary | undefined;
+
+					if (profile.models && profile.models.length > 0) {
+						const firstModelArn = profile.models[0].modelArn;
+						if (firstModelArn) {
+							// Extract the identifier after "foundation-model/"
+							const match = firstModelArn.match(/foundation-model\/(.+)$/);
+							if (match) {
+								const identifier = `foundation-model/${match[1]}`;
+								// Find the matching foundation model
+								matchedModel = foundationModels.find(fm =>
+									fm.modelArn.endsWith(identifier)
+								);
+							}
+						}
+					}
+
+					profiles.push({
+						modelArn: profile.inferenceProfileArn || "",
+						modelId: profile.inferenceProfileArn || "",
+						modelName: profile.inferenceProfileName || "",
+						// Use foundation model properties if matched, otherwise use defaults
+						providerName: matchedModel?.providerName || "Bedrock Application Inference Profile",
+						inputModalities: matchedModel?.inputModalities || [],
+						outputModalities: matchedModel?.outputModalities || [],
+						responseStreamingSupported: matchedModel?.responseStreamingSupported || false,
+						inferenceTypesSupported: matchedModel?.inferenceTypesSupported || [],
+						modelLifecycle: matchedModel?.modelLifecycle || {status: ""},
+					});
+				}
+			}
+
+			return profiles;
+		} catch (err) {
+			logger.error("[Bedrock API Client] Failed to fetch application inference profiles", err);
+			return [];
+		}
+	}
+
 	async startConversationStream(
 		authConfig: AuthConfig,
 		input: ConverseStreamCommandInput

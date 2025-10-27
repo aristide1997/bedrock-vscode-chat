@@ -80,12 +80,15 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		const region = this.globalState.get<string>("bedrock.region") ?? "us-east-1";
 		this.client.setRegion(region);
 
-		let models, availableProfileIds;
+		let models, availableProfileIds, applicationProfiles;
 		try {
+			// Fetch models and profiles in parallel first
 			[models, availableProfileIds] = await Promise.all([
 				this.client.fetchModels(authConfig),
 				this.client.fetchInferenceProfiles(authConfig),
 			]);
+			// Then fetch application profiles with the models data
+			applicationProfiles = await this.client.fetchApplicationInferenceProfiles(authConfig, models);
 		} catch (err) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			logger.error("[Bedrock Model Provider] Failed to fetch models", err);
@@ -126,6 +129,30 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				},
 			};
 			infos.push(modelInfo);
+		}
+
+		// Add application inference profiles
+		for (const profile of applicationProfiles) {
+			const contextLen = DEFAULT_CONTEXT_LENGTH;
+			const maxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
+			const maxInput = Math.max(1, contextLen - maxOutput);
+			const vision = profile.inputModalities.includes("IMAGE");
+
+			const profileInfo: LanguageModelChatInformation = {
+				id: profile.modelId,
+				name: profile.modelName,
+				tooltip: `AWS Bedrock - Application Inference Profile`,
+				detail: `${profile.providerName} • ${region}`,
+				family: "bedrock",
+				version: "1.0.0",
+				maxInputTokens: maxInput,
+				maxOutputTokens: maxOutput,
+				capabilities: {
+					toolCalling: true,
+					imageInput: vision,
+				},
+			};
+			infos.push(profileInfo);
 		}
 
 		this.chatEndpoints = infos.map((info) => ({
