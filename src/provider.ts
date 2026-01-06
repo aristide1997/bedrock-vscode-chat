@@ -274,6 +274,12 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 
 		if (method === "api-key") {
 			let apiKey = await this.secrets.get("bedrock.apiKey");
+			if (!apiKey) {
+				const envApiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
+				if (envApiKey && envApiKey.trim()) {
+					apiKey = envApiKey.trim();
+				}
+			}
 			if (!apiKey && !silent) {
 				const entered = await vscode.window.showInputBox({
 					title: "AWS Bedrock API Key",
