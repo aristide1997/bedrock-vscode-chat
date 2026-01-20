@@ -44,6 +44,26 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 	}
 
 	/**
+	 * Get thinking configuration from settings if enabled.
+	 * Model capability check happens at request time via OpenRouter metadata.
+	 */
+	private getThinkingConfig(): { type: 'enabled' | 'disabled'; budget_tokens?: number } | undefined {
+		const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+		const thinkingEnabled = config.get<boolean>('thinkingEnabled', false);
+
+		if (!thinkingEnabled) {
+			return undefined;
+		}
+
+		const thinkingBudgetTokens = config.get<number>('thinkingBudgetTokens', 1024);
+
+		return {
+			type: 'enabled',
+			budget_tokens: Math.max(1024, thinkingBudgetTokens), // Minimum 1024 tokens
+		};
+	}
+
+	/**
 	 * Handle configuration changes
 	 */
 	handleConfigurationChange(): void {
@@ -221,12 +241,17 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				throw new Error("Message exceeds token limit.");
 			}
 
+			// Check if thinking is configured and model supports it
+			const thinkingConfig = this.getThinkingConfig();
+			const supportsThinking = thinkingConfig ? await this.client.supportsThinking(authConfig, model.id) : false;
+
 			const requestInput: ConverseStreamCommandInput = {
 				modelId: model.id,
 				messages: converted.messages as any,
 				inferenceConfig: {
 					maxTokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
-					temperature: options.modelOptions?.temperature ?? 0.7,
+					// Temperature must be 1.0 when thinking is enabled, otherwise use user preference or default
+					temperature: (thinkingConfig && supportsThinking) ? 1.0 : (options.modelOptions?.temperature ?? 0.7),
 				},
 			};
 
@@ -248,6 +273,14 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 
 			if (toolConfig) {
 				requestInput.toolConfig = toolConfig as any;
+			}
+
+			if (thinkingConfig && supportsThinking) {
+				requestInput.additionalModelRequestFields = {
+					...(requestInput.additionalModelRequestFields as any),
+					thinking: thinkingConfig,
+				};
+				logger.log("[Bedrock Model Provider] Extended thinking enabled with budget:", thinkingConfig.budget_tokens);
 			}
 
 			logger.log("[Bedrock Model Provider] Starting streaming request");

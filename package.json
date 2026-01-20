@@ -12,6 +12,9 @@
 	"engines": {
 		"vscode": "^1.108.0"
 	},
+	"enabledApiProposals": [
+		"languageModelThinkingPart"
+	],
 	"categories": [
 		"AI",
 		"Chat"
@@ -79,6 +82,20 @@
 					"type": "string",
 					"description": "AWS Session Token for temporary credentials (optional)",
 					"title": "Session Token"
+				},
+				"languageModelChatProvider.bedrock.thinkingEnabled": {
+					"type": "boolean",
+					"description": "Enable extended thinking for Claude 3.7 Sonnet and Claude 4 models (shows model's reasoning process)",
+					"default": false,
+					"title": "Enable Extended Thinking"
+				},
+				"languageModelChatProvider.bedrock.thinkingBudgetTokens": {
+					"type": "number",
+					"description": "Maximum number of tokens allocated for thinking process (minimum: 1024, recommended: 1024-10000)",
+					"default": 1024,
+					"minimum": 1024,
+					"maximum": 32768,
+					"title": "Thinking Budget Tokens"
 				}
 			}
 		},
