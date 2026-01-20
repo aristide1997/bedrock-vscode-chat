@@ -30,9 +30,26 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		private readonly globalState: vscode.Memento,
 		private readonly userAgent: string
 	) {
-		const region = this.globalState.get<string>("bedrock.region") ?? "us-east-1";
+		const region = this.getRegionFromConfig();
 		this.client = new BedrockAPIClient(region);
 		this.streamProcessor = new StreamProcessor();
+	}
+
+	/**
+	 * Get region from configuration
+	 */
+	private getRegionFromConfig(): string {
+		const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+		return config.get<string>('region') ?? "us-east-1";
+	}
+
+	/**
+	 * Handle configuration changes
+	 */
+	handleConfigurationChange(): void {
+		const region = this.getRegionFromConfig();
+		this.client.setRegion(region);
+		logger.log("[Bedrock Model Provider] Configuration changed, region updated to:", region);
 	}
 
 	private estimateMessagesTokens(msgs: readonly vscode.LanguageModelChatMessage[]): number {
@@ -77,7 +94,7 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 			return [];
 		}
 
-		const region = this.globalState.get<string>("bedrock.region") ?? "us-east-1";
+		const region = this.getRegionFromConfig();
 		this.client.setRegion(region);
 
 		let models, availableProfileIds;
@@ -269,54 +286,62 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 		}
 	}
 
+	/**
+	 * Get authentication configuration from VS Code settings
+	 */
 	private async getAuthConfig(silent: boolean = false): Promise<AuthConfig | undefined> {
-		const method = this.globalState.get<AuthMethod>("bedrock.authMethod") ?? "api-key";
+		const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+		const method = config.get<AuthMethod>('authMethod') ?? 'default';
 
-		if (method === "api-key") {
-			let apiKey = await this.secrets.get("bedrock.apiKey");
+		if (method === 'default') {
+			// Use default credential provider chain
+			return { method: 'default' };
+		}
+
+		if (method === 'api-key') {
+			const apiKey = config.get<string>('apiKey');
 			if (!apiKey && !silent) {
-				const entered = await vscode.window.showInputBox({
-					title: "AWS Bedrock API Key",
-					prompt: "Enter your AWS Bedrock API key",
-					ignoreFocusOut: true,
-					password: true,
-				});
-				if (entered && entered.trim()) {
-					apiKey = entered.trim();
-					await this.secrets.store("bedrock.apiKey", apiKey);
-				}
+				vscode.window.showInformationMessage(
+					'Please configure your AWS Bedrock API Key in settings or run "Configure AWS Bedrock".'
+				);
+				return undefined;
 			}
 			if (!apiKey) {
 				return undefined;
 			}
-			return { method: "api-key", apiKey };
+			return { method: 'api-key', apiKey };
 		}
 
-		if (method === "profile") {
-			const profile = this.globalState.get<string>("bedrock.profile");
-			if (!profile) {
-				if (!silent) {
-					vscode.window.showErrorMessage("AWS profile not configured. Please run 'Manage AWS Bedrock Provider'.");
-				}
+		if (method === 'profile') {
+			const profile = config.get<string>('profile');
+			if (!profile && !silent) {
+				vscode.window.showInformationMessage(
+					'Please configure your AWS profile in settings or run "Configure AWS Bedrock".'
+				);
 				return undefined;
 			}
-			return { method: "profile", profile };
+			if (!profile) {
+				return undefined;
+			}
+			return { method: 'profile', profile };
 		}
 
-		if (method === "access-keys") {
-			const accessKeyId = await this.secrets.get("bedrock.accessKeyId");
-			const secretAccessKey = await this.secrets.get("bedrock.secretAccessKey");
-			const sessionToken = await this.secrets.get("bedrock.sessionToken");
+		if (method === 'access-keys') {
+			const accessKeyId = config.get<string>('accessKeyId');
+			const secretAccessKey = config.get<string>('secretAccessKey');
+			const sessionToken = config.get<string>('sessionToken');
 
 			if (!accessKeyId || !secretAccessKey) {
 				if (!silent) {
-					vscode.window.showErrorMessage("AWS access keys not configured. Please run 'Manage AWS Bedrock Provider'.");
+					vscode.window.showInformationMessage(
+						'Please configure your AWS access keys in settings or run "Configure AWS Bedrock".'
+					);
 				}
 				return undefined;
 			}
 
 			return {
-				method: "access-keys",
+				method: 'access-keys',
 				accessKeyId,
 				secretAccessKey,
 				...(sessionToken && { sessionToken }),

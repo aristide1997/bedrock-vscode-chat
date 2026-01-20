@@ -1,10 +1,31 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
+import * as path from "path";
+import * as fs from "fs";
 import { BedrockChatModelProvider } from "../provider";
-import { config } from "dotenv";
 
-// Load environment variables from .env file
-config();
+/**
+ * Load API key from .env file
+ */
+function loadApiKeyFromEnv(): string | undefined {
+	const envPath = path.resolve(__dirname, "../../.env");
+	if (!fs.existsSync(envPath)) {
+		return undefined;
+	}
+
+	const envContent = fs.readFileSync(envPath, 'utf-8');
+	const lines = envContent.split('\n');
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+			const [key, ...valueParts] = trimmed.split('=');
+			if (key.trim() === 'AWS_BEARER_TOKEN_BEDROCK' && valueParts.length > 0) {
+				return valueParts.join('=').trim();
+			}
+		}
+	}
+	return undefined;
+}
 
 /**
  * Simple integration test that verifies Bedrock API works end-to-end.
@@ -12,7 +33,8 @@ config();
  */
 suite("Bedrock Integration", () => {
 	test("End-to-end: list models, send message, get streaming response", async function () {
-		const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
+		console.log("  → Loading API key from .env...");
+		const apiKey = loadApiKeyFromEnv();
 		if (!apiKey) {
 			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
 			this.skip();
@@ -21,19 +43,34 @@ suite("Bedrock Integration", () => {
 
 		this.timeout(30000);
 
+		// Mock VS Code configuration to use API key from environment
+		const originalGetConfiguration = vscode.workspace.getConfiguration;
+		(vscode.workspace as any).getConfiguration = (section?: string) => {
+			if (section === 'languageModelChatProvider.bedrock') {
+				return {
+					get: (key: string) => {
+						if (key === 'region') return 'us-east-1';
+						if (key === 'authMethod') return 'api-key';
+						if (key === 'apiKey') return apiKey;
+						return undefined;
+					},
+					has: () => true,
+					inspect: () => undefined,
+					update: async () => {}
+				};
+			}
+			return originalGetConfiguration(section);
+		};
+
 		const provider = new BedrockChatModelProvider(
 			{
-				get: async () => apiKey,
+				get: async () => undefined,
 				store: async () => {},
 				delete: async () => {},
 				onDidChange: () => ({ dispose() {} }),
 			} as unknown as vscode.SecretStorage,
 			{
-				get: (key: string) => {
-					if (key === "bedrock.region") return "us-east-1";
-					if (key === "bedrock.authMethod") return "api-key";
-					return undefined;
-				},
+				get: () => undefined,
 				update: async () => {},
 				keys: () => [],
 				setKeysForSync: () => {},
@@ -102,7 +139,7 @@ suite("Bedrock Integration", () => {
 	});
 
 	test("Tool calling: model calls calculator tool", async function () {
-		const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
+		const apiKey = loadApiKeyFromEnv();
 		if (!apiKey) {
 			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
 			this.skip();
@@ -111,19 +148,34 @@ suite("Bedrock Integration", () => {
 
 		this.timeout(30000);
 
+		// Mock VS Code configuration to use API key from environment
+		const originalGetConfiguration = vscode.workspace.getConfiguration;
+		(vscode.workspace as any).getConfiguration = (section?: string) => {
+			if (section === 'languageModelChatProvider.bedrock') {
+				return {
+					get: (key: string) => {
+						if (key === 'region') return 'us-east-1';
+						if (key === 'authMethod') return 'api-key';
+						if (key === 'apiKey') return apiKey;
+						return undefined;
+					},
+					has: () => true,
+					inspect: () => undefined,
+					update: async () => {}
+				};
+			}
+			return originalGetConfiguration(section);
+		};
+
 		const provider = new BedrockChatModelProvider(
 			{
-				get: async () => apiKey,
+				get: async () => undefined,
 				store: async () => {},
 				delete: async () => {},
 				onDidChange: () => ({ dispose() {} }),
 			} as unknown as vscode.SecretStorage,
 			{
-				get: (key: string) => {
-					if (key === "bedrock.region") return "us-east-1";
-					if (key === "bedrock.authMethod") return "api-key";
-					return undefined;
-				},
+				get: () => undefined,
 				update: async () => {},
 				keys: () => [],
 				setKeysForSync: () => {},

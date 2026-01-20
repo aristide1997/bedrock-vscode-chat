@@ -97,25 +97,39 @@ export class BedrockAPIClient {
 	}
 
 	private getCredentials(authConfig: AuthConfig) {
+		// Clean up API key environment variable if not using API key auth
+		if (authConfig.method !== 'api-key') {
+			delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+		}
+
 		if (authConfig.method === 'api-key') {
+			if (!authConfig.apiKey) {
+				throw new Error('API key is required for api-key authentication method');
+			}
 			process.env.AWS_BEARER_TOKEN_BEDROCK = authConfig.apiKey;
 			return undefined;
 		}
 
-		delete process.env.AWS_BEARER_TOKEN_BEDROCK;
-
 		if (authConfig.method === 'profile') {
+			if (!authConfig.profile) {
+				throw new Error('Profile name is required for profile authentication method');
+			}
 			return fromIni({ profile: authConfig.profile });
 		}
 
 		if (authConfig.method === 'access-keys') {
+			if (!authConfig.accessKeyId || !authConfig.secretAccessKey) {
+				throw new Error('Access key ID and secret access key are required for access-keys authentication method');
+			}
 			return {
-				accessKeyId: authConfig.accessKeyId!,
-				secretAccessKey: authConfig.secretAccessKey!,
+				accessKeyId: authConfig.accessKeyId,
+				secretAccessKey: authConfig.secretAccessKey,
 				...(authConfig.sessionToken && { sessionToken: authConfig.sessionToken }),
 			};
 		}
 
+		// 'default' method - use AWS SDK's default credential provider chain
+		// This will check environment variables, EC2 instance metadata, etc.
 		return undefined;
 	}
 }
