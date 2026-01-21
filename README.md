@@ -51,6 +51,7 @@ Select "default" in Settings → Language Model Chat Provider: Bedrock → Auth 
 - Streaming responses
 - Tool/function calling for compatible models
 - Vision/image input for compatible models (Claude models)
+- Extended thinking for compatible models (shows model's reasoning process)
 - Support for all AWS regions
 - Cross-region inference profiles for optimized model access and routing
 
@@ -59,10 +60,12 @@ Select "default" in Settings → Language Model Chat Provider: Bedrock → Auth 
 The extension exposes all Bedrock foundation models with streaming capabilities across all AWS regions:
 
 - Claude Sonnet 4.5
-- Claude Sonnet 4 / 3.7
+- Claude Sonnet 4 / 3.7 (supports extended thinking)
 - Llama 3.1/3.2
 - Mistral Large
 - And more...
+
+**Extended Thinking**: Claude 3.7 Sonnet and Claude 4 models support extended thinking mode, which shows the model's internal reasoning process before providing answers. When enabled, temperature is automatically set to 1.0 for optimal results.
 
 ## Configuration
 
@@ -75,6 +78,9 @@ Configure the extension through VS Code settings (Cmd/Ctrl + , then search for "
 - **API Key**: Your AWS Bedrock API Key (when using api-key method)
 - **Profile**: AWS profile name (when using profile method)
 - **Access Key ID / Secret Access Key**: AWS credentials (when using access-keys method)
+- **Session Token**: AWS Session Token for temporary credentials (optional, used with access-keys method)
+- **Enable Extended Thinking**: Enable extended thinking mode for compatible Claude models (default: disabled)
+- **Thinking Budget Tokens**: Maximum tokens allocated for the thinking process (1024-32768, default: 1024)
 
 ### Commands
 
