@@ -8,10 +8,13 @@
 		"type": "git",
 		"url": "https://github.com/aristide1997/bedrock-vscode-chat"
 	},
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"engines": {
-		"vscode": "^1.104.0"
+		"vscode": "^1.108.0"
 	},
+	"enabledApiProposals": [
+		"languageModelThinkingPart"
+	],
 	"categories": [
 		"AI",
 		"Chat"
@@ -33,6 +36,69 @@
 	},
 	"license": "MIT",
 	"contributes": {
+		"configuration": {
+			"title": "AWS Bedrock Provider",
+			"properties": {
+				"languageModelChatProvider.bedrock.region": {
+					"type": "string",
+					"description": "AWS region for Bedrock services (e.g., us-east-1, eu-west-1)",
+					"default": "us-east-1",
+					"title": "AWS Region"
+				},
+				"languageModelChatProvider.bedrock.authMethod": {
+					"type": "string",
+					"enum": ["api-key", "profile", "access-keys", "default"],
+					"enumDescriptions": [
+						"Use an AWS Bedrock API Key (Bearer Token)",
+						"Use an AWS profile from ~/.aws/credentials",
+						"Use explicit AWS access keys",
+						"Use default credential provider chain"
+					],
+					"description": "Authentication method for AWS Bedrock",
+					"default": "default",
+					"title": "Authentication Method"
+				},
+				"languageModelChatProvider.bedrock.apiKey": {
+					"type": "string",
+					"description": "AWS Bedrock API Key (Bearer Token) - starts with 'bedrock-api-key-'. Can be long-term (1-365 days) or short-term (up to 12 hours). Only used when authMethod is 'api-key'.",
+					"title": "Bedrock API Key"
+				},
+				"languageModelChatProvider.bedrock.profile": {
+					"type": "string",
+					"description": "AWS profile name from ~/.aws/credentials (only used when authMethod is 'profile')",
+					"title": "AWS Profile"
+				},
+				"languageModelChatProvider.bedrock.accessKeyId": {
+					"type": "string",
+					"description": "AWS Access Key ID (only used when authMethod is 'access-keys')",
+					"title": "Access Key ID"
+				},
+				"languageModelChatProvider.bedrock.secretAccessKey": {
+					"type": "string",
+					"description": "AWS Secret Access Key (only used when authMethod is 'access-keys')",
+					"title": "Secret Access Key"
+				},
+				"languageModelChatProvider.bedrock.sessionToken": {
+					"type": "string",
+					"description": "AWS Session Token for temporary credentials (optional)",
+					"title": "Session Token"
+				},
+				"languageModelChatProvider.bedrock.thinkingEnabled": {
+					"type": "boolean",
+					"description": "Enable extended thinking for Claude 3.7 Sonnet and Claude 4 models (shows model's reasoning process)",
+					"default": false,
+					"title": "Enable Extended Thinking"
+				},
+				"languageModelChatProvider.bedrock.thinkingBudgetTokens": {
+					"type": "number",
+					"description": "Maximum number of tokens allocated for thinking process (minimum: 1024, recommended: 1024-10000)",
+					"default": 1024,
+					"minimum": 1024,
+					"maximum": 32768,
+					"title": "Thinking Budget Tokens"
+				}
+			}
+		},
 		"languageModelChatProviders": [
 			{
 				"vendor": "bedrock",
@@ -44,6 +110,16 @@
 			{
 				"command": "bedrock.manage",
 				"title": "Manage AWS Bedrock Provider"
+			},
+			{
+				"command": "bedrock.selectModel",
+				"title": "Change Bedrock Model",
+				"category": "AWS Bedrock"
+			},
+			{
+				"command": "bedrock.configure",
+				"title": "Configure AWS Bedrock",
+				"category": "AWS Bedrock"
 			}
 		]
 	},
@@ -69,7 +145,7 @@
 		"@stylistic/eslint-plugin": "^2.9.0",
 		"@types/mocha": "^10.0.6",
 		"@types/node": "^22",
-		"@types/vscode": "^1.103.0",
+		"@types/vscode": "^1.108.0",
 		"@vscode/dts": "^0.4.1",
 		"@vscode/test-cli": "^0.0.11",
 		"@vscode/test-electron": "^2.5.2",

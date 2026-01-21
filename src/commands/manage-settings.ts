@@ -22,14 +22,16 @@ export async function manageSettings(
 	secrets: vscode.SecretStorage,
 	globalState: vscode.Memento
 ): Promise<void> {
-	const existingRegion = globalState.get<string>("bedrock.region") ?? "us-east-1";
-	const existingAuthMethod = globalState.get<AuthMethod>("bedrock.authMethod") ?? "api-key";
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	const existingRegion = config.get<string>("region") ?? "us-east-1";
+	const existingAuthMethod = config.get<AuthMethod>("authMethod") ?? "default";
 
 	const action = await vscode.window.showQuickPick(
 		[
 			{ label: "Set Authentication Method", value: "auth-method", description: `Current: ${existingAuthMethod}` },
 			{ label: "Set Region", value: "region", description: `Current: ${existingRegion}` },
 			{ label: "Clear Settings", value: "clear" },
+			{ label: "More Settings", value: "more-settings", description: "Open all Bedrock settings in VS Code" },
 		],
 		{
 			title: "Manage AWS Bedrock Provider",
@@ -42,7 +44,7 @@ export async function manageSettings(
 	}
 
 	if (action.value === "auth-method") {
-		await handleAuthMethodSelection(secrets, globalState);
+		await handleAuthMethodSelection();
 	} else if (action.value === "region") {
 		const region = await vscode.window.showQuickPick(REGIONS, {
 			title: "AWS Bedrock Region",
@@ -50,24 +52,24 @@ export async function manageSettings(
 			ignoreFocusOut: true,
 		});
 		if (region) {
-			await globalState.update("bedrock.region", region);
+			await config.update("region", region, vscode.ConfigurationTarget.Global);
 			vscode.window.showInformationMessage(`AWS Bedrock region set to ${region}.`);
 		}
 	} else if (action.value === "clear") {
-		await clearAllSettings(secrets, globalState);
+		await clearAllSettings();
 		vscode.window.showInformationMessage("AWS Bedrock settings cleared.");
+	} else if (action.value === "more-settings") {
+		await vscode.commands.executeCommand('workbench.action.openSettings', 'languageModelChatProvider.bedrock');
 	}
 }
 
-async function handleAuthMethodSelection(
-	secrets: vscode.SecretStorage,
-	globalState: vscode.Memento
-): Promise<void> {
+async function handleAuthMethodSelection(): Promise<void> {
 	const method = await vscode.window.showQuickPick(
 		[
-			{ label: "API Key", value: "api-key", description: "Use AWS Bedrock API key (default)" },
+			{ label: "API Key", value: "api-key", description: "Use AWS Bedrock API key (Bearer Token)" },
 			{ label: "AWS Profile", value: "profile", description: "Use AWS profile from ~/.aws/credentials" },
 			{ label: "Access Keys", value: "access-keys", description: "Use AWS access key ID and secret" },
+			{ label: "Default", value: "default", description: "Use default AWS credential provider chain" },
 		],
 		{
 			title: "Select Authentication Method",
@@ -80,22 +82,25 @@ async function handleAuthMethodSelection(
 		return;
 	}
 
-	await clearAuthSettings(secrets, globalState);
-	await globalState.update("bedrock.authMethod", method.value);
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	await clearAuthSettings();
+	await config.update("authMethod", method.value, vscode.ConfigurationTarget.Global);
 
 	if (method.value === "api-key") {
-		await handleApiKeySetup(secrets);
+		await handleApiKeySetup();
 	} else if (method.value === "profile") {
-		await handleProfileSetup(globalState);
+		await handleProfileSetup();
 	} else if (method.value === "access-keys") {
-		await handleAccessKeysSetup(secrets);
+		await handleAccessKeysSetup();
+	} else if (method.value === "default") {
+		vscode.window.showInformationMessage("Using default AWS credential provider chain.");
 	}
 }
 
-async function handleApiKeySetup(secrets: vscode.SecretStorage): Promise<void> {
+async function handleApiKeySetup(): Promise<void> {
 	const apiKey = await vscode.window.showInputBox({
 		title: "AWS Bedrock API Key",
-		prompt: "Enter your AWS Bedrock API key",
+		prompt: "Enter your AWS Bedrock API key (starts with 'bedrock-api-key-')",
 		ignoreFocusOut: true,
 		password: true,
 	});
@@ -109,11 +114,12 @@ async function handleApiKeySetup(secrets: vscode.SecretStorage): Promise<void> {
 		return;
 	}
 
-	await secrets.store("bedrock.apiKey", apiKey.trim());
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	await config.update("apiKey", apiKey.trim(), vscode.ConfigurationTarget.Global);
 	vscode.window.showInformationMessage("AWS Bedrock API key saved.");
 }
 
-async function handleProfileSetup(globalState: vscode.Memento): Promise<void> {
+async function handleProfileSetup(): Promise<void> {
 	const profile = await vscode.window.showInputBox({
 		title: "AWS Profile",
 		prompt: "Enter the AWS profile name from ~/.aws/credentials",
@@ -130,11 +136,12 @@ async function handleProfileSetup(globalState: vscode.Memento): Promise<void> {
 		return;
 	}
 
-	await globalState.update("bedrock.profile", profile.trim());
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	await config.update("profile", profile.trim(), vscode.ConfigurationTarget.Global);
 	vscode.window.showInformationMessage(`AWS profile set to '${profile.trim()}'.`);
 }
 
-async function handleAccessKeysSetup(secrets: vscode.SecretStorage): Promise<void> {
+async function handleAccessKeysSetup(): Promise<void> {
 	const accessKeyId = await vscode.window.showInputBox({
 		title: "AWS Access Key ID",
 		prompt: "Enter your AWS access key ID",
@@ -178,32 +185,29 @@ async function handleAccessKeysSetup(secrets: vscode.SecretStorage): Promise<voi
 		return;
 	}
 
-	await secrets.store("bedrock.accessKeyId", accessKeyId.trim());
-	await secrets.store("bedrock.secretAccessKey", secretAccessKey.trim());
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	await config.update("accessKeyId", accessKeyId.trim(), vscode.ConfigurationTarget.Global);
+	await config.update("secretAccessKey", secretAccessKey.trim(), vscode.ConfigurationTarget.Global);
 
 	if (sessionToken && sessionToken.trim()) {
-		await secrets.store("bedrock.sessionToken", sessionToken.trim());
+		await config.update("sessionToken", sessionToken.trim(), vscode.ConfigurationTarget.Global);
 	}
 
 	vscode.window.showInformationMessage("AWS access keys saved.");
 }
 
-async function clearAuthSettings(
-	secrets: vscode.SecretStorage,
-	globalState: vscode.Memento
-): Promise<void> {
-	await secrets.delete("bedrock.apiKey");
-	await secrets.delete("bedrock.accessKeyId");
-	await secrets.delete("bedrock.secretAccessKey");
-	await secrets.delete("bedrock.sessionToken");
-	await globalState.update("bedrock.profile", undefined);
+async function clearAuthSettings(): Promise<void> {
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	await config.update("apiKey", undefined, vscode.ConfigurationTarget.Global);
+	await config.update("accessKeyId", undefined, vscode.ConfigurationTarget.Global);
+	await config.update("secretAccessKey", undefined, vscode.ConfigurationTarget.Global);
+	await config.update("sessionToken", undefined, vscode.ConfigurationTarget.Global);
+	await config.update("profile", undefined, vscode.ConfigurationTarget.Global);
 }
 
-async function clearAllSettings(
-	secrets: vscode.SecretStorage,
-	globalState: vscode.Memento
-): Promise<void> {
-	await clearAuthSettings(secrets, globalState);
-	await globalState.update("bedrock.authMethod", undefined);
-	await globalState.update("bedrock.region", undefined);
+async function clearAllSettings(): Promise<void> {
+	await clearAuthSettings();
+	const config = vscode.workspace.getConfiguration('languageModelChatProvider.bedrock');
+	await config.update("authMethod", undefined, vscode.ConfigurationTarget.Global);
+	await config.update("region", undefined, vscode.ConfigurationTarget.Global);
 }

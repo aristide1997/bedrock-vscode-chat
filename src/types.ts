@@ -30,7 +30,13 @@ export interface BedrockImageBlock {
 	};
 }
 
-export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock;
+export interface BedrockThinkingBlock {
+	thinking?: {
+		text: string;
+	};
+}
+
+export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock | BedrockThinkingBlock;
 
 /**
  * Bedrock Converse API message structure.
@@ -102,9 +108,17 @@ export interface ToolCallBuffer {
 }
 
 /**
+ * Bedrock thinking configuration for extended thinking models.
+ */
+export interface BedrockThinkingConfig {
+	type: 'enabled' | 'disabled';
+	budget_tokens?: number;
+}
+
+/**
  * Authentication method for AWS Bedrock.
  */
-export type AuthMethod = 'api-key' | 'profile' | 'access-keys';
+export type AuthMethod = 'api-key' | 'profile' | 'access-keys' | 'default';
 
 /**
  * Authentication configuration for AWS Bedrock.

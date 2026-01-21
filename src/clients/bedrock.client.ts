@@ -1,14 +1,18 @@
-import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from "@aws-sdk/client-bedrock";
+import { BedrockClient as AWSBedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from "@aws-sdk/client-bedrock";
 import {
 	BedrockRuntimeClient,
 	ConverseStreamCommand,
 	ConverseStreamCommandInput,
 } from "@aws-sdk/client-bedrock-runtime";
-import { fromIni } from "@aws-sdk/credential-providers";
-import type { BedrockModelSummary, AuthConfig } from "./types";
-import { logger } from "./logger";
+import type { AwsCredentialIdentity, Provider } from "@aws-sdk/types";
+import type { BedrockModelSummary } from "../types";
+import { logger } from "../logger";
 
-export class BedrockAPIClient {
+/**
+ * Pure AWS Bedrock API client.
+ * Handles only AWS SDK interactions, no business logic or caching.
+ */
+export class BedrockClient {
 	private region: string;
 
 	constructor(region: string) {
@@ -19,11 +23,12 @@ export class BedrockAPIClient {
 		this.region = region;
 	}
 
-	async fetchModels(authConfig: AuthConfig): Promise<BedrockModelSummary[]> {
+	/**
+	 * Fetch foundation models from AWS Bedrock
+	 */
+	async fetchModels(credentials: AwsCredentialIdentity | Provider<AwsCredentialIdentity> | undefined): Promise<BedrockModelSummary[]> {
 		try {
-			const credentials = this.getCredentials(authConfig);
-
-			const client = new BedrockClient({
+			const client = new AWSBedrockClient({
 				region: this.region,
 				credentials,
 			});
@@ -44,16 +49,17 @@ export class BedrockAPIClient {
 				modelLifecycle: summary.modelLifecycle,
 			}));
 		} catch (err) {
-			logger.error("[Bedrock API Client] Failed to fetch Bedrock models", err);
+			logger.error("[Bedrock Client] Failed to fetch Bedrock models", err);
 			throw err;
 		}
 	}
 
-	async fetchInferenceProfiles(authConfig: AuthConfig): Promise<Set<string>> {
+	/**
+	 * Fetch inference profiles from AWS Bedrock
+	 */
+	async fetchInferenceProfiles(credentials: AwsCredentialIdentity | Provider<AwsCredentialIdentity> | undefined): Promise<Set<string>> {
 		try {
-			const credentials = this.getCredentials(authConfig);
-
-			const client = new BedrockClient({
+			const client = new AWSBedrockClient({
 				region: this.region,
 				credentials,
 			});
@@ -70,17 +76,18 @@ export class BedrockAPIClient {
 
 			return profileIds;
 		} catch (err) {
-			logger.error("[Bedrock API Client] Failed to fetch inference profiles", err);
+			logger.error("[Bedrock Client] Failed to fetch inference profiles", err);
 			return new Set();
 		}
 	}
 
+	/**
+	 * Start a conversation stream with AWS Bedrock
+	 */
 	async startConversationStream(
-		authConfig: AuthConfig,
+		credentials: AwsCredentialIdentity | Provider<AwsCredentialIdentity> | undefined,
 		input: ConverseStreamCommandInput
 	): Promise<AsyncIterable<any>> {
-		const credentials = this.getCredentials(authConfig);
-
 		const client = new BedrockRuntimeClient({
 			region: this.region,
 			credentials,
@@ -94,28 +101,5 @@ export class BedrockAPIClient {
 		}
 
 		return response.stream;
-	}
-
-	private getCredentials(authConfig: AuthConfig) {
-		if (authConfig.method === 'api-key') {
-			process.env.AWS_BEARER_TOKEN_BEDROCK = authConfig.apiKey;
-			return undefined;
-		}
-
-		delete process.env.AWS_BEARER_TOKEN_BEDROCK;
-
-		if (authConfig.method === 'profile') {
-			return fromIni({ profile: authConfig.profile });
-		}
-
-		if (authConfig.method === 'access-keys') {
-			return {
-				accessKeyId: authConfig.accessKeyId!,
-				secretAccessKey: authConfig.secretAccessKey!,
-				...(authConfig.sessionToken && { sessionToken: authConfig.sessionToken }),
-			};
-		}
-
-		return undefined;
 	}
 }
