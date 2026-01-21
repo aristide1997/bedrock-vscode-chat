@@ -31,6 +31,7 @@ export async function manageSettings(
 			{ label: "Set Authentication Method", value: "auth-method", description: `Current: ${existingAuthMethod}` },
 			{ label: "Set Region", value: "region", description: `Current: ${existingRegion}` },
 			{ label: "Clear Settings", value: "clear" },
+			{ label: "More Settings", value: "more-settings", description: "Open all Bedrock settings in VS Code" },
 		],
 		{
 			title: "Manage AWS Bedrock Provider",
@@ -57,6 +58,8 @@ export async function manageSettings(
 	} else if (action.value === "clear") {
 		await clearAllSettings();
 		vscode.window.showInformationMessage("AWS Bedrock settings cleared.");
+	} else if (action.value === "more-settings") {
+		await vscode.commands.executeCommand('workbench.action.openSettings', 'languageModelChatProvider.bedrock');
 	}
 }
 
