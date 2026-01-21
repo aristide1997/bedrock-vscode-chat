@@ -117,6 +117,43 @@ export class BedrockAPIClient {
 		}
 	}
 
+	/**
+	 * Get model properties (context length, max output tokens) from OpenRouter metadata.
+	 * Returns undefined if model not found or metadata not loaded.
+	 */
+	async getModelProperties(modelId: string): Promise<{ contextLength?: number; maxOutputTokens?: number } | undefined> {
+		// Ensure OpenRouter metadata is loaded
+		await this.fetchOpenRouterMetadata();
+
+		// Normalize model ID for matching (remove region prefixes)
+		const normalizedModelId = modelId.replace(/^(us|eu|ap|apac|global)\./i, '').toLowerCase().replace(/\./g, '-');
+
+		// Search for matching model in OpenRouter metadata
+		for (const [cachedId, metadata] of this.openRouterMetadataCache.entries()) {
+			const normalizedCachedId = cachedId.toLowerCase().replace(/\./g, '-');
+
+			// Match if either ID contains the other (handles versioning differences)
+			if (normalizedCachedId.includes(normalizedModelId) || normalizedModelId.includes(normalizedCachedId)) {
+				const contextLength = metadata.context_length as number | undefined;
+				const maxOutputTokens = metadata.top_provider?.max_completion_tokens as number | undefined;
+
+				logger.log(`[Bedrock API Client] Found OpenRouter metadata for ${modelId}:`, {
+					contextLength,
+					maxOutputTokens,
+					matchedId: cachedId
+				});
+
+				return {
+					contextLength,
+					maxOutputTokens
+				};
+			}
+		}
+
+		logger.log(`[Bedrock API Client] No OpenRouter metadata found for ${modelId}`);
+		return undefined;
+	}
+
 	async fetchModels(authConfig: AuthConfig): Promise<BedrockModelSummary[]> {
 		try {
 			const credentials = this.getCredentials(authConfig);

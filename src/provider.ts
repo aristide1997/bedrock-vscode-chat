@@ -140,16 +140,18 @@ export class BedrockChatModelProvider implements LanguageModelChatProvider {
 				continue;
 			}
 
-			const contextLen = DEFAULT_CONTEXT_LENGTH;
-			const maxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
-			const maxInput = Math.max(1, contextLen - maxOutput);
-			const vision = m.inputModalities.includes("IMAGE");
-
 			const inferenceProfileId = `${regionPrefix}.${m.modelId}`;
 			const hasInferenceProfile = availableProfileIds.has(inferenceProfileId);
+			const modelIdToUse = hasInferenceProfile ? inferenceProfileId : m.modelId;
+
+			// Try to get model properties from OpenRouter, fall back to defaults
+			const properties = await this.client.getModelProperties(modelIdToUse);
+			const maxInput = properties?.contextLength ?? DEFAULT_CONTEXT_LENGTH;
+			const maxOutput = properties?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+			const vision = m.inputModalities.includes("IMAGE");
 
 			const modelInfo: LanguageModelChatInformation = {
-				id: hasInferenceProfile ? inferenceProfileId : m.modelId,
+				id: modelIdToUse,
 				name: m.modelName,
 				tooltip: `AWS Bedrock - ${m.providerName}${hasInferenceProfile ? ' (Cross-Region)' : ''}`,
 				detail: `${m.providerName} • ${hasInferenceProfile ? 'Multi-Region' : region}`,
