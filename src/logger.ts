@@ -15,10 +15,68 @@ class Logger {
 
 	private formatMessage(level: string, args: any[]): string {
 		const timestamp = new Date().toISOString();
-		const message = args.map(arg =>
-			typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-		).join(' ');
+		const message = args.map(arg => this.safeStringify(arg)).join(' ');
 		return `[${timestamp}] [${level}] ${message}`;
+	}
+
+	/**
+	 * Safely stringify objects, handling circular references and errors.
+	 */
+	private safeStringify(value: any): string {
+		if (value === null || value === undefined) {
+			return String(value);
+		}
+
+		if (typeof value !== 'object') {
+			return String(value);
+		}
+
+		// Handle Error objects specially to extract useful information
+		if (value instanceof Error) {
+			const errorInfo: any = {
+				name: value.name,
+				message: value.message,
+			};
+
+			// Include stack trace if available
+			if (value.stack) {
+				errorInfo.stack = value.stack;
+			}
+
+			// Include any additional properties on the error
+			for (const key of Object.keys(value)) {
+				if (key !== 'name' && key !== 'message' && key !== 'stack') {
+					try {
+						errorInfo[key] = value[key as keyof Error];
+					} catch {
+						// Skip properties that can't be accessed
+					}
+				}
+			}
+
+			try {
+				return JSON.stringify(errorInfo, null, 2);
+			} catch {
+				return `${value.name}: ${value.message}`;
+			}
+		}
+
+		// Handle circular references with a replacer function
+		const seen = new WeakSet();
+		try {
+			return JSON.stringify(value, (key, val) => {
+				if (typeof val === 'object' && val !== null) {
+					if (seen.has(val)) {
+						return '[Circular Reference]';
+					}
+					seen.add(val);
+				}
+				return val;
+			}, 2);
+		} catch (err) {
+			// Fallback: use Object.prototype.toString if JSON.stringify fails
+			return Object.prototype.toString.call(value);
+		}
 	}
 
 	private logToChannel(level: string, args: any[]): void {
