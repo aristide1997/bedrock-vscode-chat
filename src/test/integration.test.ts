@@ -2,7 +2,9 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
-import { BedrockChatModelProvider } from "../provider";
+import { BedrockChatProvider } from "../providers/bedrock-chat.provider";
+import { ConfigurationService } from "../services/configuration.service";
+import { AuthenticationService } from "../services/authentication.service";
 
 /**
  * Load API key from .env file
@@ -62,21 +64,9 @@ suite("Bedrock Integration", () => {
 			return originalGetConfiguration(section);
 		};
 
-		const provider = new BedrockChatModelProvider(
-			{
-				get: async () => undefined,
-				store: async () => {},
-				delete: async () => {},
-				onDidChange: () => ({ dispose() {} }),
-			} as unknown as vscode.SecretStorage,
-			{
-				get: () => undefined,
-				update: async () => {},
-				keys: () => [],
-				setKeysForSync: () => {},
-			} as unknown as vscode.Memento,
-			"test/1.0"
-		);
+		const configService = new ConfigurationService();
+		const authService = new AuthenticationService(configService);
+		const provider = new BedrockChatProvider(configService, authService);
 
 		// Step 1: Fetch models
 		console.log("  → Fetching models...");
@@ -167,21 +157,9 @@ suite("Bedrock Integration", () => {
 			return originalGetConfiguration(section);
 		};
 
-		const provider = new BedrockChatModelProvider(
-			{
-				get: async () => undefined,
-				store: async () => {},
-				delete: async () => {},
-				onDidChange: () => ({ dispose() {} }),
-			} as unknown as vscode.SecretStorage,
-			{
-				get: () => undefined,
-				update: async () => {},
-				keys: () => [],
-				setKeysForSync: () => {},
-			} as unknown as vscode.Memento,
-			"test/1.0"
-		);
+		const configService = new ConfigurationService();
+		const authService = new AuthenticationService(configService);
+		const provider = new BedrockChatProvider(configService, authService);
 
 		// Step 1: Fetch models
 		console.log("  → Fetching models...");
@@ -191,7 +169,7 @@ suite("Bedrock Integration", () => {
 		);
 
 		// Step 2: Find Claude 3.5 Haiku by name (how users actually select models)
-		const claude = models.find((m) => m.name.includes("Claude 3.5 Haiku"));
+		const claude = models.find((m: any) => m.name.includes("Claude 3.5 Haiku"));
 
 		assert.ok(claude, "Should have Claude 3.5 Haiku available");
 
@@ -372,21 +350,9 @@ suite("Bedrock Integration", () => {
 			return originalGetConfiguration(section);
 		};
 
-		const provider = new BedrockChatModelProvider(
-			{
-				get: async () => undefined,
-				store: async () => {},
-				delete: async () => {},
-				onDidChange: () => ({ dispose() {} }),
-			} as unknown as vscode.SecretStorage,
-			{
-				get: () => undefined,
-				update: async () => {},
-				keys: () => [],
-				setKeysForSync: () => {},
-			} as unknown as vscode.Memento,
-			"test/1.0"
-		);
+		const configService = new ConfigurationService();
+		const authService = new AuthenticationService(configService);
+		const provider = new BedrockChatProvider(configService, authService);
 
 		// Step 1: Fetch models
 		console.log("  → Fetching models...");
@@ -396,7 +362,7 @@ suite("Bedrock Integration", () => {
 		);
 
 		// Step 2: Find Claude 3.7 Sonnet (thinking-capable model)
-		const claudeSonnet37 = models.find((m) =>
+		const claudeSonnet37 = models.find((m: any) =>
 			m.id.includes("claude-3-7-sonnet") || m.name.includes("Claude 3.7 Sonnet")
 		);
 

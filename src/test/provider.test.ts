@@ -1,6 +1,8 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
-import { BedrockChatModelProvider } from "../provider";
+import { BedrockChatProvider } from "../providers/bedrock-chat.provider";
+import { ConfigurationService } from "../services/configuration.service";
+import { AuthenticationService } from "../services/authentication.service";
 import { convertMessages } from "../converters/messages";
 import { convertTools } from "../converters/tools";
 import { validateRequest, validateTools } from "../validation";
@@ -10,21 +12,9 @@ import { ToolCallBufferManager } from "../tool-buffer";
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
 		test("prepareLanguageModelChatInformation returns array (no key -> empty)", async () => {
-			const provider = new BedrockChatModelProvider(
-				{
-					get: async () => undefined,
-					store: async () => {},
-					delete: async () => {},
-					onDidChange: (_listener: unknown) => ({ dispose() {} }),
-				} as unknown as vscode.SecretStorage,
-				{
-					get: () => undefined,
-					update: async () => {},
-					keys: () => [],
-					setKeysForSync: () => {},
-				} as unknown as vscode.Memento,
-				"GitHubCopilotChat/test VSCode/test"
-			);
+			const configService = new ConfigurationService();
+			const authService = new AuthenticationService(configService);
+			const provider = new BedrockChatProvider(configService, authService);
 
 			const infos = await provider.prepareLanguageModelChatInformation(
 				{ silent: true },
@@ -34,21 +24,9 @@ suite("Bedrock Chat Provider Extension", () => {
 		});
 
 		test("provideTokenCount counts simple string", async () => {
-			const provider = new BedrockChatModelProvider(
-				{
-					get: async () => undefined,
-					store: async () => {},
-					delete: async () => {},
-					onDidChange: (_listener: unknown) => ({ dispose() {} }),
-				} as unknown as vscode.SecretStorage,
-				{
-					get: () => undefined,
-					update: async () => {},
-					keys: () => [],
-					setKeysForSync: () => {},
-				} as unknown as vscode.Memento,
-				"GitHubCopilotChat/test VSCode/test"
-			);
+			const configService = new ConfigurationService();
+			const authService = new AuthenticationService(configService);
+			const provider = new BedrockChatProvider(configService, authService);
 
 			const est = await provider.provideTokenCount(
 				{
@@ -68,21 +46,9 @@ suite("Bedrock Chat Provider Extension", () => {
 		});
 
 		test("provideTokenCount counts message parts", async () => {
-			const provider = new BedrockChatModelProvider(
-				{
-					get: async () => undefined,
-					store: async () => {},
-					delete: async () => {},
-					onDidChange: (_listener: unknown) => ({ dispose() {} }),
-				} as unknown as vscode.SecretStorage,
-				{
-					get: () => undefined,
-					update: async () => {},
-					keys: () => [],
-					setKeysForSync: () => {},
-				} as unknown as vscode.Memento,
-				"GitHubCopilotChat/test VSCode/test"
-			);
+			const configService = new ConfigurationService();
+			const authService = new AuthenticationService(configService);
+			const provider = new BedrockChatProvider(configService, authService);
 
 			const msg: vscode.LanguageModelChatMessage = {
 				role: vscode.LanguageModelChatMessageRole.User,
@@ -107,21 +73,9 @@ suite("Bedrock Chat Provider Extension", () => {
 		});
 
 		test("provideLanguageModelChatResponse throws without API key", async () => {
-			const provider = new BedrockChatModelProvider(
-				{
-					get: async () => undefined,
-					store: async () => {},
-					delete: async () => {},
-					onDidChange: (_listener: unknown) => ({ dispose() {} }),
-				} as unknown as vscode.SecretStorage,
-				{
-					get: () => undefined,
-					update: async () => {},
-					keys: () => [],
-					setKeysForSync: () => {},
-				} as unknown as vscode.Memento,
-				"GitHubCopilotChat/test VSCode/test"
-			);
+			const configService = new ConfigurationService();
+			const authService = new AuthenticationService(configService);
+			const provider = new BedrockChatProvider(configService, authService);
 
 			let threw = false;
 			try {

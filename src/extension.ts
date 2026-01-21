@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
-import { BedrockChatModelProvider } from "./provider";
+import { BedrockChatProvider } from "./providers/bedrock-chat.provider";
+import { ConfigurationService } from "./services/configuration.service";
+import { AuthenticationService } from "./services/authentication.service";
 import { manageSettings } from "./commands/manage-settings";
 import { logger } from "./logger";
 
@@ -9,12 +11,11 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(outputChannel);
 
-	const ext = vscode.extensions.getExtension("arifum.bedrock-vscode-chat");
-	const extVersion = ext?.packageJSON?.version ?? "unknown";
-	const vscodeVersion = vscode.version;
-	const ua = `bedrock-vscode-chat/${extVersion} VSCode/${vscodeVersion}`;
+	// Initialize services with dependency injection
+	const configService = new ConfigurationService();
+	const authService = new AuthenticationService(configService);
+	const provider = new BedrockChatProvider(configService, authService);
 
-	const provider = new BedrockChatModelProvider(context.secrets, context.globalState, ua);
 	vscode.lm.registerLanguageModelChatProvider("bedrock", provider);
 
 	// Listen for configuration changes
