@@ -4,9 +4,24 @@ import {
 	ConverseStreamCommand,
 	ConverseStreamCommandInput,
 } from "@aws-sdk/client-bedrock-runtime";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import type { AwsCredentialIdentity, Provider } from "@aws-sdk/types";
 import type { BedrockModelSummary } from "../types";
 import { logger } from "../logger";
+
+function getProxyAgent(): HttpsProxyAgent<string> | undefined {
+	const proxyUrl =
+		process.env.HTTPS_PROXY ??
+		process.env.https_proxy ??
+		process.env.HTTP_PROXY ??
+		process.env.http_proxy;
+	if (proxyUrl) {
+		logger.log("[Bedrock Client] Routing requests through proxy:", proxyUrl);
+		return new HttpsProxyAgent(proxyUrl);
+	}
+	return undefined;
+}
 
 /**
  * Pure AWS Bedrock API client.
@@ -31,6 +46,9 @@ export class BedrockClient {
 			const client = new AWSBedrockClient({
 				region: this.region,
 				credentials,
+				requestHandler: new NodeHttpHandler({
+					httpsAgent: getProxyAgent(),
+				}),
 			});
 
 			const command = new ListFoundationModelsCommand({});
@@ -62,6 +80,9 @@ export class BedrockClient {
 			const client = new AWSBedrockClient({
 				region: this.region,
 				credentials,
+				requestHandler: new NodeHttpHandler({
+					httpsAgent: getProxyAgent(),
+				}),
 			});
 
 			const command = new ListInferenceProfilesCommand({});
@@ -91,6 +112,9 @@ export class BedrockClient {
 		const client = new BedrockRuntimeClient({
 			region: this.region,
 			credentials,
+			requestHandler: new NodeHttpHandler({
+				httpsAgent: getProxyAgent(),
+			}),
 		});
 
 		const command = new ConverseStreamCommand(input);

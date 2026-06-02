@@ -138,7 +138,8 @@
 	"dependencies": {
 		"@aws-sdk/client-bedrock": "^3.716.0",
 		"@aws-sdk/client-bedrock-runtime": "^3.716.0",
-		"@aws-sdk/credential-providers": "^3.901.0"
+		"@aws-sdk/credential-providers": "^3.901.0",
+		"https-proxy-agent": "^7.0.0"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
