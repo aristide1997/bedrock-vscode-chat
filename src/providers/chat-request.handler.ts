@@ -12,6 +12,7 @@ import { BedrockClient } from "../clients/bedrock.client";
 import { StreamProcessor } from "../stream-processor";
 import { convertMessages } from "../converters/messages";
 import { convertTools } from "../converters/tools";
+import { getModelProfile } from "../profiles";
 import { validateRequest } from "../validation";
 import { logger } from "../logger";
 import { ModelService } from "../services/model.service";
@@ -102,6 +103,7 @@ export class ChatRequestHandler {
 			});
 
 			const toolConfig = convertTools(options, model.id);
+			const profile = getModelProfile(model.id);
 
 			if (options.tools && options.tools.length > 128) {
 				throw new Error("Cannot have more than 128 tools per request.");
@@ -127,8 +129,11 @@ export class ChatRequestHandler {
 				messages: converted.messages as any,
 				inferenceConfig: {
 					maxTokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
-					// Temperature must be 1.0 when thinking is enabled, otherwise use user preference or default
-					temperature: (thinkingConfig && supportsThinking) ? 1.0 : (options.modelOptions?.temperature ?? 0.7),
+					// Temperature must be omitted for models that have deprecated it (e.g. Claude 4+)
+					// When thinking is enabled, temperature must be 1.0
+					...(profile.supportsTemperature && {
+						temperature: (thinkingConfig && supportsThinking) ? 1.0 : (options.modelOptions?.temperature ?? 0.7),
+					}),
 				},
 			};
 
