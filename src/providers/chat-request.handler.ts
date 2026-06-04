@@ -118,17 +118,12 @@ export class ChatRequestHandler {
 				throw new Error("Message exceeds token limit.");
 			}
 
-			// Check if thinking is configured and model supports it
-			const thinkingConfig = this.configService.getThinkingConfig();
-			const supportsThinking = thinkingConfig ? await this.modelService.supportsThinking(model.id) : false;
-
 			const requestInput: ConverseStreamCommandInput = {
 				modelId: model.id,
 				messages: converted.messages as any,
 				inferenceConfig: {
 					maxTokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
-					// Temperature must be 1.0 when thinking is enabled, otherwise use user preference or default
-					temperature: (thinkingConfig && supportsThinking) ? 1.0 : (options.modelOptions?.temperature ?? 0.7),
+					temperature: options.modelOptions?.temperature ?? 0.7,
 				},
 			};
 
@@ -150,14 +145,6 @@ export class ChatRequestHandler {
 
 			if (toolConfig) {
 				requestInput.toolConfig = toolConfig as any;
-			}
-
-			if (thinkingConfig && supportsThinking) {
-				requestInput.additionalModelRequestFields = {
-					...(requestInput.additionalModelRequestFields as any),
-					thinking: thinkingConfig,
-				};
-				logger.log("[Chat Request Handler] Extended thinking enabled with budget:", thinkingConfig.budget_tokens);
 			}
 
 			logger.log("[Chat Request Handler] Starting streaming request");
