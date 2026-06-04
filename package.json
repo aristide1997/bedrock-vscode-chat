@@ -108,10 +108,11 @@
 	},
 	"main": "./out/extension.js",
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
+		"vscode:prepublish": "npm run clean && npm run compile",
 		"download-api": "dts dev",
 		"postdownload-api": "dts main",
 		"postinstall": "npm run download-api",
+		"clean": "rimraf out",
 		"compile": "tsc -p ./",
 		"lint": "eslint",
 		"format": "prettier --write .",
@@ -135,6 +136,7 @@
 		"dotenv": "^17.2.3",
 		"eslint": "^9.13.0",
 		"prettier": "^3.1.0",
+		"rimraf": "^6.0.1",
 		"typescript": "^5.9.2",
 		"typescript-eslint": "^8.39.0"
 	}

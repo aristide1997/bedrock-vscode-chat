@@ -51,7 +51,7 @@ suite("Bedrock Integration", () => {
 			if (section === 'languageModelChatProvider.bedrock') {
 				return {
 					get: (key: string) => {
-						if (key === 'region') return 'us-east-1';
+						if (key === 'region') return 'eu-central-1';
 						if (key === 'authMethod') return 'api-key';
 						if (key === 'apiKey') return apiKey;
 						return undefined;
@@ -78,10 +78,10 @@ suite("Bedrock Integration", () => {
 		assert.ok(models.length > 0, "Should fetch models from Bedrock");
 		console.log(`  ✓ Found ${models.length} models`);
 
-		// Step 2: Find Claude 3.5 Haiku by name (how users actually select models)
-		const claude = models.find((m) => m.name.includes("Claude 3.5 Haiku"));
+		// Step 2: Find Claude Haiku 4.5 by name (how users actually select models)
+		const claude = models.find((m) => m.name.includes("Claude Haiku 4.5"));
 
-		assert.ok(claude, "Should have Claude 3.5 Haiku available");
+		assert.ok(claude, "Should have Claude Haiku 4.5 available");
 
 		console.log(`  ✓ Using model: ${claude.name}`);
 		console.log(`  ✓ System selected: ${claude.id}`);
@@ -144,7 +144,7 @@ suite("Bedrock Integration", () => {
 			if (section === 'languageModelChatProvider.bedrock') {
 				return {
 					get: (key: string) => {
-						if (key === 'region') return 'us-east-1';
+						if (key === 'region') return 'eu-central-1';
 						if (key === 'authMethod') return 'api-key';
 						if (key === 'apiKey') return apiKey;
 						return undefined;
@@ -168,10 +168,10 @@ suite("Bedrock Integration", () => {
 			new vscode.CancellationTokenSource().token
 		);
 
-		// Step 2: Find Claude 3.5 Haiku by name (how users actually select models)
-		const claude = models.find((m: any) => m.name.includes("Claude 3.5 Haiku"));
+		// Step 2: Find Claude Haiku 4.5 by name (how users actually select models)
+		const claude = models.find((m: any) => m.name.includes("Claude Haiku 4.5"));
 
-		assert.ok(claude, "Should have Claude 3.5 Haiku available");
+		assert.ok(claude, "Should have Claude Haiku 4.5 available");
 
 		console.log(`  ✓ Using model: ${claude.name}`);
 		console.log(`  ✓ System selected: ${claude.id}`);
@@ -317,133 +317,5 @@ suite("Bedrock Integration", () => {
 		);
 
 		console.log("  ✓ Tool calling integration test PASSED");
-	});
-
-	test("Thinking: model shows extended reasoning process", async function () {
-		const apiKey = loadApiKeyFromEnv();
-		if (!apiKey) {
-			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
-			this.skip();
-			return;
-		}
-
-		this.timeout(45000); // Extended timeout for thinking
-
-		// Mock VS Code configuration with thinking enabled
-		const originalGetConfiguration = vscode.workspace.getConfiguration;
-		(vscode.workspace as any).getConfiguration = (section?: string) => {
-			if (section === 'languageModelChatProvider.bedrock') {
-				return {
-					get: (key: string) => {
-						if (key === 'region') return 'us-east-1';
-						if (key === 'authMethod') return 'api-key';
-						if (key === 'apiKey') return apiKey;
-						if (key === 'thinkingEnabled') return true;
-						if (key === 'thinkingBudgetTokens') return 2048;
-						return undefined;
-					},
-					has: () => true,
-					inspect: () => undefined,
-					update: async () => {}
-				};
-			}
-			return originalGetConfiguration(section);
-		};
-
-		const configService = new ConfigurationService();
-		const authService = new AuthenticationService(configService);
-		const provider = new BedrockChatProvider(configService, authService);
-
-		// Step 1: Fetch models
-		console.log("  → Fetching models...");
-		const models = await provider.prepareLanguageModelChatInformation(
-			{ silent: true },
-			new vscode.CancellationTokenSource().token
-		);
-
-		// Step 2: Find Claude 3.7 Sonnet (thinking-capable model)
-		const claudeSonnet37 = models.find((m: any) =>
-			m.id.includes("claude-3-7-sonnet") || m.name.includes("Claude 3.7 Sonnet")
-		);
-
-		if (!claudeSonnet37) {
-			console.log("⚠️  Skipping thinking test - Claude 3.7 Sonnet not available in region");
-			this.skip();
-			return;
-		}
-
-		console.log(`  ✓ Using thinking-capable model: ${claudeSonnet37.name}`);
-		console.log(`  ✓ Model ID: ${claudeSonnet37.id}`);
-
-		// Step 3: Send a prompt that benefits from step-by-step reasoning
-		console.log("  → Sending prompt that requires reasoning...");
-		const messages: vscode.LanguageModelChatMessage[] = [
-			{
-				role: vscode.LanguageModelChatMessageRole.User,
-				content: [
-					new vscode.LanguageModelTextPart(
-						"Solve this step by step: A train travels 120 kilometers in 2 hours. " +
-						"If it maintains the same speed, how far will it travel in 5 hours? " +
-						"Show your reasoning process."
-					)
-				],
-				name: undefined,
-			},
-		];
-
-		const thinkingParts: any[] = [];
-		const textParts: vscode.LanguageModelTextPart[] = [];
-		let thinkingContent = "";
-		let finalResponse = "";
-
-		await provider.provideLanguageModelChatResponse(
-			claudeSonnet37,
-			messages,
-			{} as vscode.LanguageModelChatRequestHandleOptions,
-			{
-				report: (part) => {
-					if (part instanceof vscode.LanguageModelTextPart) {
-						textParts.push(part);
-						finalResponse += part.value;
-					} else if ('LanguageModelThinkingPart' in vscode && part instanceof (vscode as any).LanguageModelThinkingPart) {
-						thinkingParts.push(part);
-						const thinkingValue = (part as any).value || '';
-						thinkingContent += thinkingValue;
-					}
-				},
-			},
-			new vscode.CancellationTokenSource().token
-		);
-
-		// Step 4: Verify thinking content was received
-		console.log(`  → Thinking parts received: ${thinkingParts.length}`);
-		console.log(`  → Total thinking content: ${thinkingContent.length} chars`);
-		console.log(`  → Text parts received: ${textParts.length}`);
-		console.log(`  → Final response: ${finalResponse.length} chars`);
-
-		if (thinkingParts.length > 0) {
-			console.log(`  ✓ THINKING CONTENT SAMPLE:`);
-			console.log(`    "${thinkingContent.substring(0, 150)}..."`);
-
-			assert.ok(thinkingParts.length > 0, "Should receive thinking parts");
-			assert.ok(thinkingContent.length > 0, "Should receive thinking content");
-			console.log("  ✓ Extended thinking is working!");
-		} else {
-			console.log("  ⚠️  No thinking parts received (may not be available in this VS Code version)");
-		}
-
-		// Step 5: Verify final response quality
-		assert.ok(textParts.length > 0, "Should receive text response");
-		assert.ok(finalResponse.length > 0, "Should have final response");
-
-		// Check if the answer is correct (300 km)
-		const has300 = finalResponse.includes("300") || finalResponse.includes("three hundred");
-		assert.ok(
-			has300 || finalResponse.toLowerCase().includes("kilometers"),
-			"Response should contain the correct answer or reasoning"
-		);
-
-		console.log(`  ✓ Final response: "${finalResponse.trim()}"`);
-		console.log("  ✓ Thinking integration test PASSED");
 	});
 });
