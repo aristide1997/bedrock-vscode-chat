@@ -1,11 +1,8 @@
 import * as vscode from "vscode";
 import { ToolCallBufferManager } from "./tool-buffer";
-import { logger } from "./logger";
 
 export class StreamProcessor {
 	private toolBuffer: ToolCallBufferManager;
-	private thinkingBuffer: string = "";
-	private hasEmittedThinking: boolean = false;
 
 	constructor() {
 		this.toolBuffer = new ToolCallBufferManager();
@@ -17,8 +14,6 @@ export class StreamProcessor {
 		token: vscode.CancellationToken
 	): Promise<void> {
 		this.toolBuffer.reset();
-		this.thinkingBuffer = "";
-		this.hasEmittedThinking = false;
 
 		try {
 			for await (const event of stream) {
@@ -43,22 +38,6 @@ export class StreamProcessor {
 					const idx = event.contentBlockDelta.contentBlockIndex ?? 0;
 					const delta = event.contentBlockDelta.delta;
 
-					// Handle thinking content (Bedrock uses 'reasoningContent' not 'thinking')
-					if (delta?.reasoningContent?.text) {
-						const thinkingText = delta.reasoningContent.text;
-						this.thinkingBuffer += thinkingText;
-						// Emit thinking part directly - LanguageModelThinkingPart is enabled via package.json
-						try {
-							const ThinkingPart = (vscode as any).LanguageModelThinkingPart;
-							if (ThinkingPart) {
-								progress.report(new ThinkingPart(thinkingText));
-								this.hasEmittedThinking = true;
-							}
-						} catch (e) {
-							logger.warn("[StreamProcessor] LanguageModelThinkingPart not available", e);
-						}
-					}
-
 					if (delta?.text) {
 						progress.report(new vscode.LanguageModelTextPart(delta.text));
 						if (delta.text.length > 0) {
@@ -79,8 +58,6 @@ export class StreamProcessor {
 			}
 		} finally {
 			this.toolBuffer.reset();
-			this.thinkingBuffer = "";
-			this.hasEmittedThinking = false;
 		}
 	}
 }

@@ -30,13 +30,7 @@ export interface BedrockImageBlock {
 	};
 }
 
-export interface BedrockThinkingBlock {
-	thinking?: {
-		text: string;
-	};
-}
-
-export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock | BedrockThinkingBlock;
+export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock;
 
 /**
  * Bedrock Converse API message structure.
@@ -105,14 +99,6 @@ export interface ToolCallBuffer {
 	id?: string;
 	name?: string;
 	args: string;
-}
-
-/**
- * Bedrock thinking configuration for extended thinking models.
- */
-export interface BedrockThinkingConfig {
-	type: 'enabled' | 'disabled';
-	budget_tokens?: number;
 }
 
 /**

@@ -1,0 +1,23 @@
+name: ci
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package VSIX (no publish)
+        run: npx @vscode/vsce package -o /tmp/ci.vsix

@@ -7,7 +7,6 @@ interface OpenRouterModel {
 	top_provider?: {
 		max_completion_tokens?: number;
 	};
-	supported_parameters?: string[];
 }
 
 interface OpenRouterResponse {
@@ -91,26 +90,6 @@ export class OpenRouterClient {
 		}
 
 		return undefined;
-	}
-
-	/**
-	 * Check if a model supports thinking/reasoning based on OpenRouter metadata
-	 */
-	async supportsThinking(modelId: string): Promise<boolean> {
-		await this.fetchMetadata();
-
-		const metadata = this.findMetadata(modelId);
-		if (!metadata) {
-			logger.log(`[OpenRouter Client] Model ${modelId} not found in OpenRouter metadata, assuming no thinking support`);
-			return false;
-		}
-
-		const supportsReasoning = metadata.supported_parameters?.includes('reasoning') ||
-		                         metadata.supported_parameters?.includes('include_reasoning');
-
-		const result = supportsReasoning === true;
-		logger.log(`[OpenRouter Client] Model ${modelId} thinking support: ${result}`);
-		return result;
 	}
 
 	/**
