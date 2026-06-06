@@ -72,12 +72,27 @@ function readBedrockChatLog(userDataDir) {
   return rel.map((p) => { try { return readFileSync(join(logsDir, p), 'utf8'); } catch { return ''; } }).join('\n');
 }
 
-function killPort(port) {
+function portPids(port) {
   try {
-    const pids = execFileSync('lsof', ['-ti', `tcp:${port}`], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-    for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
-    if (pids.length) console.log(`[harness] killed stale process(es) on :${port} ->`, pids.join(','));
-  } catch { /* nothing listening */ }
+    return execFileSync('lsof', ['-ti', `tcp:${port}`], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  } catch { return []; /* nothing listening */ }
+}
+
+function killPort(port) {
+  const pids = portPids(port);
+  for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
+  if (pids.length) console.log(`[harness] killed stale process(es) on :${port} ->`, pids.join(','));
+}
+
+// Killing is async at the OS level; relaunching while the old instance still holds the
+// debug port causes CDP to attach to a dying workbench ("page not found"). Wait for release.
+async function waitForPortFree(port, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (portPids(port).length === 0) return;
+    await sleep(150);
+  }
+  console.log(`[harness] WARN: port :${port} still held after ${timeoutMs}ms; launching anyway`);
 }
 
 async function waitForCDP(port, timeoutMs = 60000) {
@@ -229,6 +244,7 @@ async function main() {
   cleanEnv.AWS_BEARER_TOKEN_BEDROCK = key;
 
   killPort(CDP_PORT); // ensure no stale harness instance holds the debug port
+  await waitForPortFree(CDP_PORT); // and wait for the OS to actually release it before relaunching
   console.log('[harness] launching VS Code with CDP...');
   const proc = spawn(vscodeExecutablePath, [
     workDir,
@@ -250,18 +266,30 @@ async function main() {
   console.log('[harness] CDP up:', ver.Browser);
 
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
-  const ctx = browser.contexts()[0];
-  let win;
-  for (let i = 0; i < 60 && !win; i++) {
-    for (const p of ctx.pages()) {
-      try { if (await p.locator('.monaco-workbench').count()) { win = p; break; } } catch {}
+  // Discover the workbench page. Re-read contexts()/pages() EACH iteration — they populate
+  // asynchronously after connect, and VS Code opens several pages (splash, etc.) before the
+  // workbench renders; capturing contexts()[0] once races against an empty/partial list.
+  let win, ctxCount = 0, pageCount = 0;
+  const findDeadline = Date.now() + 90000;
+  while (!win && Date.now() < findDeadline) {
+    const ctxs = browser.contexts();
+    ctxCount = ctxs.length;
+    const pages = ctxs.flatMap(c => c.pages());
+    pageCount = pages.length;
+    for (const p of pages) {
+      try { if (await p.locator('.monaco-workbench').count()) { win = p; break; } } catch { /* page may be closing */ }
     }
     if (!win) await sleep(500);
   }
-  if (!win) throw new Error('workbench page not found over CDP');
+  if (!win) {
+    throw new Error(
+      `workbench page not found over CDP after 90s (saw ${ctxCount} context(s), ${pageCount} page(s)). ` +
+      `Likely a slow start or a stale instance on :${CDP_PORT} — check \`lsof -ti tcp:${CDP_PORT}\`.`
+    );
+  }
   await win.locator('.monaco-workbench').first().waitFor({ timeout: 60000 });
   console.log('[harness] workbench loaded');
-  await sleep(3000);
+  await win.locator('.chat-input-toolbars, .monaco-workbench .part.editor').first().waitFor({ timeout: 10000 }).catch(() => {});
   await shot(win, 'launched');
   const signedOut = await win.evaluate(() =>
     !!Array.from(document.querySelectorAll('a, .monaco-button, [role=button]'))
@@ -324,7 +352,9 @@ async function main() {
     const filter = win.locator('.action-widget input.action-list-filter-input, .action-widget input').first();
     if (await filter.count() && await filter.isVisible()) {
       await filter.fill(TARGET_MODEL);
-      await sleep(700);
+      // wait for the filtered list to actually contain the target row instead of a blind sleep
+      await win.locator('.action-widget .monaco-list-row').filter({ hasText: TARGET_MODEL }).first()
+        .waitFor({ timeout: 4000 }).catch(() => {});
       const filtered = await win.evaluate(() =>
         Array.from(document.querySelectorAll('.action-widget .monaco-list-row')).map(r => r.textContent.trim().slice(0, 50)));
       // Deterministic selection by PROVIDER GROUP: the picker groups models under a
@@ -423,6 +453,30 @@ async function main() {
 
   // ---- STAGE 6: tool call (agent creates a file) ----
   console.log('[harness] STAGE 6: tool call');
+  // Fix A (fail fast): file-editing tools are only offered to the model in Agent mode.
+  // Assert the chat input is in Agent mode BEFORE prompting, so a non-Agent session
+  // aborts loudly here instead of producing a confusing zero-tool-call failure below.
+  // The mode picker (.chat-mode-picker-item) renders the CURRENT mode as a codicon
+  // (vscode 1.122 chatModes.ts: Agent=codicon-agent, Ask=codicon-question, Edit=codicon-edit).
+  // NB: the button's aria-label is the static action tooltip ("Set Agent ... Open Agent
+  // Picker") and does NOT reflect the current mode — so we key off the icon, not aria.
+  const modeState = await win.evaluate(() => {
+    const btn = document.querySelector('.chat-mode-picker-item a.action-label');
+    if (!btn) return { found: false };
+    const icon = btn.querySelector('span.codicon');
+    return {
+      found: true,
+      iconCls: icon ? String(icon.className) : '(no codicon)',
+      isAgent: !!icon && /\bcodicon-agent\b/.test(String(icon.className)),
+    };
+  });
+  if (!modeState.found) {
+    throw new Error('STAGE 6: chat mode picker (.chat-mode-picker-item) not found — cannot confirm Agent mode; aborting before tool stage.');
+  }
+  if (!modeState.isAgent) {
+    throw new Error(`STAGE 6: chat is NOT in Agent mode (mode icon="${modeState.iconCls}", expected codicon-agent). File-editing tools are only offered to the model in Agent mode; aborting so the tool stage never runs in a mode that cannot succeed.`);
+  }
+  console.log('[harness] Agent mode confirmed (icon=' + modeState.iconCls + ')');
   await typePrompt('Using your file editing tools, create a new file named TOOLCALL.txt in the workspace whose only content is the text TOOLCALL_OK. Do it now.');
   const r6 = await waitResponse({ maxMs: 60000, approve: true });
   await shot(win, 'tool-response');
@@ -443,7 +497,8 @@ async function main() {
     console.log('[harness] STAGE 7: image / vision');
     const addBtn = win.locator('.chat-input-toolbars [aria-label^="Add Context"]').first();
     await addBtn.click({ timeout: 5000 });
-    await sleep(800);
+    // wait for the Add-Context quick pick to open rather than a blind sleep
+    await win.locator('.quick-input-widget input').first().waitFor({ timeout: 5000 }).catch(() => {});
     const qi = win.locator('.quick-input-widget input').first();
     if (await qi.count() && await qi.isVisible()) {
       await qi.fill('vision.png');
@@ -476,7 +531,7 @@ async function main() {
 
   const checks = [
     ['Bedrock provider served requests (API-key auth + streaming in its log)', served, 'fail'],
-    ['active model was the Bedrock Claude Haiku 4.5 (asserted at selection)', matchesTarget(selectedLabel), 'fail'],
+    [`active model was the Bedrock ${TARGET_MODEL} (asserted at selection)`, matchesTarget(selectedLabel), 'fail'],
     ['text reply contains BEDROCK_E2E_OK', /BEDROCK_E2E_OK/.test(r5.text), 'fail'],
     ['tool call created TOOLCALL.txt = TOOLCALL_OK', fileCreated && toolContent === 'TOOLCALL_OK', 'fail'],
   ];

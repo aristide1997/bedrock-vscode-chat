@@ -10,6 +10,8 @@ import { tryParseJSONObject } from "../converters/schema";
 import { ToolCallBufferManager } from "../tool-buffer";
 import { getProxyAgent } from "../clients/bedrock.client";
 import { getModelProfile } from "../profiles";
+import { buildRequestInput } from "../converters/request";
+import { StreamProcessor } from "../stream-processor";
 
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
@@ -243,6 +245,32 @@ suite("Bedrock Chat Provider Extension", () => {
 			assert.equal(getModelProfile("cohere.command-r-v1:0").supportsTemperature, true);
 			assert.equal(getModelProfile("meta.llama3-70b-instruct-v1:0").supportsTemperature, true);
 		});
+
+		test("provider-routing matrix: full profile per provider, incl. regional prefixes", () => {
+			// This is the routing table every model flows through. Each row asserts the
+			// complete profile so a change to one provider can't silently shift another.
+			const matrix: [string, { supportsToolChoice: boolean; toolResultFormat: 'text' | 'json'; supportsTemperature: boolean }][] = [
+				// anthropic: tool choice + text results; temperature only for pre-4.x
+				["anthropic.claude-3-5-sonnet-20241022-v2:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
+				["us.anthropic.claude-3-5-sonnet-20241022-v2:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
+				["anthropic.claude-sonnet-4-5-20250929-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: false }],
+				["eu.anthropic.claude-sonnet-4-5-20250929-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: false }],
+				// mistral: NO tool choice + JSON tool-result format
+				["mistral.mistral-large-2407-v1:0", { supportsToolChoice: false, toolResultFormat: 'json', supportsTemperature: true }],
+				["us.mistral.pixtral-large-2502-v1:0", { supportsToolChoice: false, toolResultFormat: 'json', supportsTemperature: true }],
+				// amazon nova: tool choice + text; non-nova amazon falls back to default (no tool choice)
+				["amazon.nova-pro-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
+				["us.amazon.nova-lite-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
+				["amazon.titan-text-express-v1", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+				// cohere / meta / ai21: default profile
+				["cohere.command-r-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+				["meta.llama3-70b-instruct-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+				["ai21.jamba-1-5-large-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+			];
+			for (const [id, expected] of matrix) {
+				assert.deepEqual(getModelProfile(id), expected, `profile mismatch for ${id}`);
+			}
+		});
 	});
 
 	suite("converters/schema", () => {
@@ -336,6 +364,216 @@ suite("Bedrock Chat Provider Extension", () => {
 		test("getProxyAgent honors lowercase http_proxy", () => {
 			process.env.http_proxy = "http://other.example.com:3128";
 			assert.ok(getProxyAgent(), "expected a proxy agent from http_proxy");
+		});
+	});
+
+	suite("converters/request", () => {
+		const baseConverted = { messages: [{ role: "user", content: [{ text: "hi" }] }], system: [] as unknown[] };
+		const model = { id: "anthropic.claude-3-5-sonnet-20241022-v2:0", maxOutputTokens: 4096 };
+
+		test("omits temperature for Claude 4.x, includes it for 3.x", () => {
+			const claude4 = buildRequestInput({
+				model: { id: "anthropic.claude-sonnet-4-5-20250929-v1:0", maxOutputTokens: 4096 },
+				converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile("anthropic.claude-sonnet-4-5-20250929-v1:0"),
+				toolConfig: undefined,
+			});
+			assert.equal(claude4.inferenceConfig!.temperature, undefined, "Claude 4.x must omit temperature");
+
+			const claude35 = buildRequestInput({
+				model,
+				converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(model.id),
+				toolConfig: undefined,
+			});
+			assert.equal(claude35.inferenceConfig!.temperature, 0.7, "Claude 3.x defaults temperature to 0.7");
+		});
+
+		test("assembles topP and stopSequences (string and array) from modelOptions", () => {
+			const withTopP = buildRequestInput({
+				model, converted: baseConverted,
+				options: { modelOptions: { top_p: 0.9, stop: "STOP" } } as unknown as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(model.id), toolConfig: undefined,
+			});
+			assert.equal(withTopP.inferenceConfig!.topP, 0.9);
+			assert.deepEqual(withTopP.inferenceConfig!.stopSequences, ["STOP"]);
+
+			const withStopArray = buildRequestInput({
+				model, converted: baseConverted,
+				options: { modelOptions: { stop: ["A", "B"] } } as unknown as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(model.id), toolConfig: undefined,
+			});
+			assert.deepEqual(withStopArray.inferenceConfig!.stopSequences, ["A", "B"]);
+			assert.equal(withStopArray.inferenceConfig!.topP, undefined, "no topP when not provided");
+		});
+
+		test("includes system + toolConfig only when present", () => {
+			const withSystem = buildRequestInput({
+				model, converted: { messages: baseConverted.messages, system: [{ text: "be terse" }] },
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(model.id), toolConfig: { tools: [] },
+			});
+			assert.ok(withSystem.system, "system set when system blocks exist");
+			assert.ok(withSystem.toolConfig, "toolConfig set when provided");
+
+			const noExtras = buildRequestInput({
+				model, converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(model.id), toolConfig: undefined,
+			});
+			assert.equal(noExtras.system, undefined);
+			assert.equal(noExtras.toolConfig, undefined);
+		});
+	});
+
+	suite("stream-processor cancellation", () => {
+		const throwingStream = (async function* () { throw new Error("stream broke"); })();
+		const progress = { report: () => {} } as unknown as vscode.Progress<vscode.LanguageModelResponsePart>;
+
+		test("suppresses stream error when cancellation was requested", async () => {
+			const cts = new vscode.CancellationTokenSource();
+			cts.cancel();
+			const sp = new StreamProcessor();
+			await assert.doesNotReject(
+				sp.processStream((async function* () { throw new Error("stream broke"); })(), progress, cts.token),
+				"error during cancellation must be suppressed"
+			);
+		});
+
+		test("rethrows stream error when not cancelled", async () => {
+			const cts = new vscode.CancellationTokenSource();
+			const sp = new StreamProcessor();
+			await assert.rejects(
+				sp.processStream(throwingStream, progress, cts.token),
+				/stream broke/,
+				"error without cancellation must propagate"
+			);
+		});
+	});
+
+	suite("chat-request guards", () => {
+		// Drive the real provider with a mocked config so the handler reaches its guards;
+		// both guards throw BEFORE any Bedrock network call. Config mock restored in teardown.
+		let originalGetConfiguration: typeof vscode.workspace.getConfiguration;
+		setup(() => { originalGetConfiguration = vscode.workspace.getConfiguration; });
+		teardown(() => { (vscode.workspace as any).getConfiguration = originalGetConfiguration; });
+
+		const mockConfig = () => {
+			(vscode.workspace as any).getConfiguration = (section?: string) => {
+				if (section === 'languageModelChatProvider.bedrock') {
+					return {
+						get: (key: string) => key === 'region' ? 'us-east-1' : key === 'authMethod' ? 'api-key' : key === 'apiKey' ? 'bedrock-api-key-test' : undefined,
+						has: () => true, inspect: () => undefined, update: async () => {},
+					};
+				}
+				return originalGetConfiguration(section);
+			};
+		};
+		const makeModel = (over: Partial<vscode.LanguageModelChatInformation> = {}) => ({
+			id: "anthropic.claude-3-5-sonnet-20241022-v2:0", name: "m", family: "bedrock", version: "1.0.0",
+			maxInputTokens: 100000, maxOutputTokens: 4096, capabilities: {}, ...over,
+		} as unknown as vscode.LanguageModelChatInformation);
+		const userMsg = (text: string): vscode.LanguageModelChatMessage => ({
+			role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart(text)], name: undefined,
+		});
+
+		test("rejects when more than 128 tools are supplied", async () => {
+			mockConfig();
+			const provider = new BedrockChatProvider(new ConfigurationService(), new AuthenticationService(new ConfigurationService()));
+			const tools = Array.from({ length: 129 }, (_, i) => ({ name: `tool_${i}`, description: "", inputSchema: {} }));
+			await assert.rejects(
+				provider.provideLanguageModelChatResponse(makeModel(), [userMsg("hi")], { tools } as unknown as vscode.LanguageModelChatRequestHandleOptions, { report: () => {} }, new vscode.CancellationTokenSource().token),
+				/more than 128 tools/,
+			);
+		});
+
+		test("rejects when message exceeds the model token limit", async () => {
+			mockConfig();
+			const provider = new BedrockChatProvider(new ConfigurationService(), new AuthenticationService(new ConfigurationService()));
+			await assert.rejects(
+				provider.provideLanguageModelChatResponse(makeModel({ maxInputTokens: 1 }), [userMsg("this message is definitely more than one token long")], {} as vscode.LanguageModelChatRequestHandleOptions, { report: () => {} }, new vscode.CancellationTokenSource().token),
+				/exceeds token limit/,
+			);
+		});
+	});
+
+	suite("authentication.service env-var lifecycle", () => {
+		let saved: string | undefined;
+		setup(() => { saved = process.env.AWS_BEARER_TOKEN_BEDROCK; });
+		teardown(() => { if (saved === undefined) { delete process.env.AWS_BEARER_TOKEN_BEDROCK; } else { process.env.AWS_BEARER_TOKEN_BEDROCK = saved; } });
+
+		test("api-key sets AWS_BEARER_TOKEN_BEDROCK; switching away deletes it", () => {
+			const auth = new AuthenticationService(new ConfigurationService());
+			const creds = auth.getCredentials({ method: 'api-key', apiKey: 'bedrock-api-key-xyz' });
+			assert.equal(creds, undefined, "api-key auth returns no explicit credentials (uses env var)");
+			assert.equal(process.env.AWS_BEARER_TOKEN_BEDROCK, 'bedrock-api-key-xyz');
+
+			auth.getCredentials({ method: 'default' });
+			assert.equal(process.env.AWS_BEARER_TOKEN_BEDROCK, undefined, "non-api-key method must clear the bearer token");
+		});
+	});
+
+	suite("validation/multi-tool", () => {
+		test("accepts multiple tool calls each paired with a result; throws on orphan", () => {
+			const callA = new vscode.LanguageModelToolCallPart("a", "toolA", {});
+			const callB = new vscode.LanguageModelToolCallPart("b", "toolB", {});
+			const resA = new vscode.LanguageModelToolResultPart("a", [new vscode.LanguageModelTextPart("ra")]);
+			const resB = new vscode.LanguageModelToolResultPart("b", [new vscode.LanguageModelTextPart("rb")]);
+
+			const paired: vscode.LanguageModelChatMessage[] = [
+				{ role: vscode.LanguageModelChatMessageRole.Assistant, content: [callA, callB], name: undefined },
+				{ role: vscode.LanguageModelChatMessageRole.User, content: [resA, resB], name: undefined },
+			];
+			assert.doesNotThrow(() => validateRequest(paired));
+
+			const orphan: vscode.LanguageModelChatMessage[] = [
+				{ role: vscode.LanguageModelChatMessageRole.Assistant, content: [callA, callB], name: undefined },
+				{ role: vscode.LanguageModelChatMessageRole.User, content: [resA], name: undefined },
+			];
+			assert.throws(() => validateRequest(orphan), "missing result for callB must throw");
+		});
+	});
+
+	suite("converters/messages mistral JSON tool results", () => {
+		const mistral = "mistral.mistral-large-2407-v1:0";
+		const toolResultBlock = (out: ReturnType<typeof convertMessages>) =>
+			out.messages.flatMap((m: any) => m.content).find((c: any) => c && "toolResult" in c)?.toolResult?.content;
+
+		test("valid JSON tool result is emitted as a json block", () => {
+			const msgs: vscode.LanguageModelChatMessage[] = [
+				{ role: vscode.LanguageModelChatMessageRole.Assistant, content: [new vscode.LanguageModelToolCallPart("c1", "t", {})], name: undefined },
+				{ role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelToolResultPart("c1", [new vscode.LanguageModelTextPart('{"answer":42}')])], name: undefined },
+			];
+			const content = toolResultBlock(convertMessages(msgs, mistral));
+			assert.deepEqual(content, [{ json: { answer: 42 } }]);
+		});
+
+		test("invalid JSON tool result falls back to a text block", () => {
+			const msgs: vscode.LanguageModelChatMessage[] = [
+				{ role: vscode.LanguageModelChatMessageRole.Assistant, content: [new vscode.LanguageModelToolCallPart("c1", "t", {})], name: undefined },
+				{ role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelToolResultPart("c1", [new vscode.LanguageModelTextPart("not json")])], name: undefined },
+			];
+			const content = toolResultBlock(convertMessages(msgs, mistral));
+			assert.deepEqual(content, [{ text: "not json" }]);
+		});
+	});
+
+	suite("converters/tools toolChoice by provider", () => {
+		const tool = { name: "do_x", description: "", inputSchema: {} };
+
+		test("mistral (no toolChoice support) emits no toolChoice", () => {
+			const out = convertTools({ tools: [tool] } as vscode.LanguageModelChatRequestHandleOptions, "mistral.mistral-large-2407-v1:0");
+			assert.ok(out, "tools still converted");
+			assert.equal(out!.toolChoice, undefined, "mistral must not set toolChoice");
+		});
+
+		test("anthropic with ToolMode.Required and >1 tool throws", () => {
+			assert.throws(() =>
+				convertTools({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [tool, { ...tool, name: "do_y" }] } as vscode.LanguageModelChatRequestHandleOptions, "anthropic.claude-3-5-sonnet-20241022-v2:0"),
+				/more than one tool/,
+			);
 		});
 	});
 });

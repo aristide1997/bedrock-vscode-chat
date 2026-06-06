@@ -34,6 +34,13 @@ function loadApiKeyFromEnv(): string | undefined {
  * Run with: npm test (automatically loads .env file)
  */
 suite("Bedrock Integration", () => {
+	// Each test below replaces vscode.workspace.getConfiguration with a mock. Restore it
+	// after every test so a failure mid-test can't leak its mock into later tests
+	// (cross-test contamination). Captured before each test mocks it.
+	let suiteOriginalGetConfiguration: typeof vscode.workspace.getConfiguration;
+	setup(() => { suiteOriginalGetConfiguration = vscode.workspace.getConfiguration; });
+	teardown(() => { (vscode.workspace as any).getConfiguration = suiteOriginalGetConfiguration; });
+
 	test("End-to-end: list models, send message, get streaming response", async function () {
 		console.log("  → Loading API key from .env...");
 		const apiKey = loadApiKeyFromEnv();
