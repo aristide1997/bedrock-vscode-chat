@@ -128,6 +128,92 @@ suite("Bedrock Integration", () => {
 		console.log("  ✓ Integration test PASSED");
 	});
 
+	test("Claude 4.x: temperature + top_p together is accepted (temperature omitted by profile)", async function () {
+		// Regression guard for PR #9. Bedrock rejects requests to Claude 4.x models that
+		// specify BOTH temperature and top_p (Sonnet/Haiku 4.5) — and rejects temperature
+		// entirely for some Opus 4.x. getModelProfile() now flags supportsTemperature=false
+		// for Claude 4.x so the handler omits temperature, leaving only top_p.
+		// Before the fix this request throws a Bedrock ValidationException.
+		const apiKey = loadApiKeyFromEnv();
+		if (!apiKey) {
+			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
+			this.skip();
+			return;
+		}
+
+		this.timeout(30000);
+
+		const originalGetConfiguration = vscode.workspace.getConfiguration;
+		(vscode.workspace as any).getConfiguration = (section?: string) => {
+			if (section === 'languageModelChatProvider.bedrock') {
+				return {
+					get: (key: string) => {
+						if (key === 'region') return 'eu-central-1';
+						if (key === 'authMethod') return 'api-key';
+						if (key === 'apiKey') return apiKey;
+						return undefined;
+					},
+					has: () => true,
+					inspect: () => undefined,
+					update: async () => {}
+				};
+			}
+			return originalGetConfiguration(section);
+		};
+
+		const configService = new ConfigurationService();
+		const authService = new AuthenticationService(configService);
+		const provider = new BedrockChatProvider(configService, authService);
+
+		console.log("  → Fetching models...");
+		const models = await provider.prepareLanguageModelChatInformation(
+			{ silent: true },
+			new vscode.CancellationTokenSource().token
+		);
+
+		// Prefer Sonnet 4.5; fall back to any Claude 4.x the key can reach.
+		const claude4 =
+			models.find((m) => m.name.includes("Claude Sonnet 4.5")) ??
+			models.find((m) => /Claude (Sonnet|Opus|Haiku) 4/.test(m.name));
+		assert.ok(claude4, "Should have a Claude 4.x model available to exercise the temperature path");
+		console.log(`  ✓ Using model: ${claude4.name} (${claude4.id})`);
+
+		const messages: vscode.LanguageModelChatMessage[] = [
+			{
+				role: vscode.LanguageModelChatMessageRole.User,
+				content: [new vscode.LanguageModelTextPart("Reply with exactly: TEMP_OK")],
+				name: undefined,
+			},
+		];
+
+		let receivedText = "";
+		let chunkCount = 0;
+
+		// Pass BOTH temperature and top_p — the combination Bedrock rejects for Claude 4.x
+		// unless temperature is dropped. This is what reproduces the bug pre-fix.
+		const options = { modelOptions: { temperature: 0.7, top_p: 0.9 } } as unknown as vscode.LanguageModelChatRequestHandleOptions;
+
+		await provider.provideLanguageModelChatResponse(
+			claude4,
+			messages,
+			options,
+			{
+				report: (part) => {
+					if (part instanceof vscode.LanguageModelTextPart) {
+						receivedText += part.value;
+						chunkCount++;
+					}
+				},
+			},
+			new vscode.CancellationTokenSource().token
+		);
+
+		assert.ok(chunkCount > 0, "Should receive streaming chunks (no ValidationException)");
+		assert.ok(receivedText.length > 0, "Should receive response text");
+		console.log(`  ✓ Received ${chunkCount} chunks: "${receivedText.trim()}"`);
+		console.log("  ✓ temperature+top_p accepted — PR #9 fix verified");
+	});
+
 	test("Tool calling: model calls calculator tool", async function () {
 		const apiKey = loadApiKeyFromEnv();
 		if (!apiKey) {

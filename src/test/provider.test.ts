@@ -9,6 +9,7 @@ import { validateRequest, validateTools } from "../validation";
 import { tryParseJSONObject } from "../converters/schema";
 import { ToolCallBufferManager } from "../tool-buffer";
 import { getProxyAgent } from "../clients/bedrock.client";
+import { getModelProfile } from "../profiles";
 
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
@@ -206,6 +207,41 @@ suite("Bedrock Chat Provider Extension", () => {
 				{ role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart("missing")], name: undefined },
 			];
 			assert.throws(() => validateRequest(invalid));
+		});
+	});
+
+	suite("profiles", () => {
+		test("Claude 4.x models omit temperature (supportsTemperature === false)", () => {
+			// Bedrock rejects the temperature inference parameter for Claude 4+ models.
+			const claude4Ids = [
+				"anthropic.claude-sonnet-4-5-20250929-v1:0",
+				"us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+				"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+				"anthropic.claude-opus-4-7-20250805-v1:0",
+				"anthropic.claude-opus-4-20250514-v1:0",
+				"anthropic.claude-haiku-4-5-20251001-v1:0",
+			];
+			for (const id of claude4Ids) {
+				assert.equal(getModelProfile(id).supportsTemperature, false, `expected supportsTemperature=false for ${id}`);
+			}
+		});
+
+		test("Claude 3.x and non-Claude models keep temperature (supportsTemperature === true)", () => {
+			const keepTemperatureIds = [
+				"anthropic.claude-3-5-sonnet-20241022-v2:0",
+				"us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+				"anthropic.claude-3-haiku-20240307-v1:0",
+				"mistral.mistral-large-2407-v1:0",
+				"amazon.nova-pro-v1:0",
+			];
+			for (const id of keepTemperatureIds) {
+				assert.equal(getModelProfile(id).supportsTemperature, true, `expected supportsTemperature=true for ${id}`);
+			}
+		});
+
+		test("unknown providers default to supportsTemperature === true", () => {
+			assert.equal(getModelProfile("cohere.command-r-v1:0").supportsTemperature, true);
+			assert.equal(getModelProfile("meta.llama3-70b-instruct-v1:0").supportsTemperature, true);
 		});
 	});
 
