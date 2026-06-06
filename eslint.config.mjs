@@ -11,7 +11,10 @@ import stylistic from '@stylistic/eslint-plugin';
 export default tseslint.config(
 	{
 		ignores: [
-			'.vscode-test',
+			// Match at any depth: the downloaded VS Code lives at both ./.vscode-test
+			// and ./e2e/.vscode-test (hundreds of MB of JS) — a bare '.vscode-test'
+			// only matches the root copy, so eslint walks the nested one and OOMs.
+			'**/.vscode-test/**',
 			'out',
 			'**/*.d.ts'
 		]

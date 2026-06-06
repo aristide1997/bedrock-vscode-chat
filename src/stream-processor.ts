@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { ToolCallBufferManager } from "./tool-buffer";
+import { logger } from "./logger";
 
 export class StreamProcessor {
 	private toolBuffer: ToolCallBufferManager;
@@ -56,6 +57,12 @@ export class StreamProcessor {
 					await this.toolBuffer.emitAll(progress);
 				}
 			}
+		} catch (err) {
+			// Suppress errors when cancellation was requested, since it is expected in that case.
+			if (!token.isCancellationRequested) {
+				throw err;
+			}
+			logger.log("[StreamProcessor] Stream error suppressed due to cancellation", err);
 		} finally {
 			this.toolBuffer.reset();
 		}

@@ -11,6 +11,11 @@ export interface ModelProfile {
 	 * Format to use for tool result content ('text' or 'json')
 	 */
 	toolResultFormat: 'text' | 'json';
+	/**
+	 * Whether the model supports the temperature inference parameter
+	 * (Claude 4+ models have deprecated temperature)
+	 */
+	supportsTemperature: boolean;
 }
 
 /**
@@ -22,6 +27,7 @@ export function getModelProfile(modelId: string): ModelProfile {
 	const defaultProfile: ModelProfile = {
 		supportsToolChoice: false,
 		toolResultFormat: 'text',
+		supportsTemperature: true,
 	};
 
 	// Split the model name into parts
@@ -40,18 +46,22 @@ export function getModelProfile(modelId: string): ModelProfile {
 
 	// Provider-specific profiles
 	switch (provider) {
-		case 'anthropic':
-			// Claude models support tool choice
+		case 'anthropic': {
+			// Claude 4+ models have deprecated the temperature parameter
+			const isClaudeV4OrNewer = /claude-(opus|sonnet|haiku)-4/.test(modelId);
 			return {
 				supportsToolChoice: true,
 				toolResultFormat: 'text',
+				supportsTemperature: !isClaudeV4OrNewer,
 			};
+		}
 
 		case 'mistral':
 			// Mistral models require JSON format for tool results
 			return {
 				supportsToolChoice: false,
 				toolResultFormat: 'json',
+				supportsTemperature: true,
 			};
 
 		case 'amazon':
@@ -60,6 +70,7 @@ export function getModelProfile(modelId: string): ModelProfile {
 				return {
 					supportsToolChoice: true,
 					toolResultFormat: 'text',
+					supportsTemperature: true,
 				};
 			}
 			return defaultProfile;

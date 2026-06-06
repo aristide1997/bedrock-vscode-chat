@@ -7,11 +7,12 @@ import type {
 	LanguageModelResponsePart,
 	Progress,
 } from "vscode";
-import { ConverseStreamCommandInput } from "@aws-sdk/client-bedrock-runtime";
 import { BedrockClient } from "../clients/bedrock.client";
 import { StreamProcessor } from "../stream-processor";
 import { convertMessages } from "../converters/messages";
 import { convertTools } from "../converters/tools";
+import { buildRequestInput } from "../converters/request";
+import { getModelProfile } from "../profiles";
 import { validateRequest } from "../validation";
 import { logger } from "../logger";
 import { ModelService } from "../services/model.service";
@@ -102,6 +103,7 @@ export class ChatRequestHandler {
 			});
 
 			const toolConfig = convertTools(options, model.id);
+			const profile = getModelProfile(model.id);
 
 			if (options.tools && options.tools.length > 128) {
 				throw new Error("Cannot have more than 128 tools per request.");
@@ -118,34 +120,7 @@ export class ChatRequestHandler {
 				throw new Error("Message exceeds token limit.");
 			}
 
-			const requestInput: ConverseStreamCommandInput = {
-				modelId: model.id,
-				messages: converted.messages as any,
-				inferenceConfig: {
-					maxTokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
-					temperature: options.modelOptions?.temperature ?? 0.7,
-				},
-			};
-
-			if (converted.system.length > 0) {
-				requestInput.system = converted.system as any;
-			}
-
-			if (options.modelOptions) {
-				const mo = options.modelOptions as Record<string, unknown>;
-				if (typeof mo.top_p === "number") {
-					requestInput.inferenceConfig!.topP = mo.top_p;
-				}
-				if (typeof mo.stop === "string") {
-					requestInput.inferenceConfig!.stopSequences = [mo.stop];
-				} else if (Array.isArray(mo.stop)) {
-					requestInput.inferenceConfig!.stopSequences = mo.stop;
-				}
-			}
-
-			if (toolConfig) {
-				requestInput.toolConfig = toolConfig as any;
-			}
+			const requestInput = buildRequestInput({ model, converted, options, profile, toolConfig });
 
 			// Resolve model ID through overrides (GovCloud, cross-region inference profiles)
 			const overrides = this.configService.getModelOverrides();
