@@ -126,9 +126,8 @@ export class ChatRequestHandler {
 				inferenceConfig: {
 					maxTokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
 					// Temperature must be omitted for models that have deprecated it (e.g. Claude 4+)
-					// When thinking is enabled, temperature must be 1.0
 					...(profile.supportsTemperature && {
-						temperature: (thinkingConfig && supportsThinking) ? 1.0 : (options.modelOptions?.temperature ?? 0.7),
+						temperature: options.modelOptions?.temperature ?? 0.7,
 					}),
 				},
 			};
