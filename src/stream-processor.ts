@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { ToolCallBufferManager } from "./tool-buffer";
+import { logger } from "./logger";
 
 export class StreamProcessor {
 	private toolBuffer: ToolCallBufferManager;

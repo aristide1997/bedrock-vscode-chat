@@ -8,6 +8,7 @@ import { convertTools } from "../converters/tools";
 import { validateRequest, validateTools } from "../validation";
 import { tryParseJSONObject } from "../converters/schema";
 import { ToolCallBufferManager } from "../tool-buffer";
+import { getProxyAgent } from "../clients/bedrock.client";
 
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
@@ -260,6 +261,45 @@ suite("Bedrock Chat Provider Extension", () => {
 			buffer.appendArgs(2, '{"query":"different"}');
 			await buffer.tryEmit(2, progress);
 			assert.equal(emitted.length, 2);
+		});
+	});
+
+	suite("proxy", () => {
+		const PROXY_VARS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+		let saved: Record<string, string | undefined>;
+
+		setup(() => {
+			saved = {};
+			for (const v of PROXY_VARS) {
+				saved[v] = process.env[v];
+				delete process.env[v];
+			}
+		});
+
+		teardown(() => {
+			for (const v of PROXY_VARS) {
+				if (saved[v] === undefined) {
+					delete process.env[v];
+				} else {
+					process.env[v] = saved[v];
+				}
+			}
+		});
+
+		test("getProxyAgent returns undefined when no proxy env var is set", () => {
+			assert.equal(getProxyAgent(), undefined);
+		});
+
+		test("getProxyAgent returns an agent when HTTPS_PROXY is set", () => {
+			process.env.HTTPS_PROXY = "http://proxy.example.com:8080";
+			const agent = getProxyAgent();
+			assert.ok(agent, "expected a proxy agent");
+			assert.equal((agent as any).proxy.href, "http://proxy.example.com:8080/");
+		});
+
+		test("getProxyAgent honors lowercase http_proxy", () => {
+			process.env.http_proxy = "http://other.example.com:3128";
+			assert.ok(getProxyAgent(), "expected a proxy agent from http_proxy");
 		});
 	});
 });

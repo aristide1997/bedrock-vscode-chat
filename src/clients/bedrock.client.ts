@@ -10,7 +10,7 @@ import type { AwsCredentialIdentity, Provider } from "@aws-sdk/types";
 import type { BedrockModelSummary } from "../types";
 import { logger } from "../logger";
 
-function getProxyAgent(): HttpsProxyAgent<string> | undefined {
+export function getProxyAgent(): HttpsProxyAgent<string> | undefined {
 	const proxyUrl =
 		process.env.HTTPS_PROXY ??
 		process.env.https_proxy ??
@@ -21,6 +21,18 @@ function getProxyAgent(): HttpsProxyAgent<string> | undefined {
 		return new HttpsProxyAgent(proxyUrl);
 	}
 	return undefined;
+}
+
+/**
+ * Build the AWS client requestHandler override.
+ * Only when a proxy is configured do we install a NodeHttpHandler (which routes
+ * through the proxy agent and uses HTTP/1.1 — many corporate proxies break the
+ * SDK's default HTTP/2 streaming). With no proxy we return nothing so the SDK
+ * keeps its default behavior for everyone else.
+ */
+function proxyRequestHandler(): { requestHandler?: NodeHttpHandler } {
+	const agent = getProxyAgent();
+	return agent ? { requestHandler: new NodeHttpHandler({ httpsAgent: agent }) } : {};
 }
 
 /**
@@ -46,9 +58,7 @@ export class BedrockClient {
 			const client = new AWSBedrockClient({
 				region: this.region,
 				credentials,
-				requestHandler: new NodeHttpHandler({
-					httpsAgent: getProxyAgent(),
-				}),
+				...proxyRequestHandler(),
 			});
 
 			const command = new ListFoundationModelsCommand({});
@@ -80,9 +90,7 @@ export class BedrockClient {
 			const client = new AWSBedrockClient({
 				region: this.region,
 				credentials,
-				requestHandler: new NodeHttpHandler({
-					httpsAgent: getProxyAgent(),
-				}),
+				...proxyRequestHandler(),
 			});
 
 			const command = new ListInferenceProfilesCommand({});
@@ -112,9 +120,7 @@ export class BedrockClient {
 		const client = new BedrockRuntimeClient({
 			region: this.region,
 			credentials,
-			requestHandler: new NodeHttpHandler({
-				httpsAgent: getProxyAgent(),
-			}),
+			...proxyRequestHandler(),
 		});
 
 		const command = new ConverseStreamCommand(input);
