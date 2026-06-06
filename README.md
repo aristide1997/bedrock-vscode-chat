@@ -50,22 +50,23 @@ Select "default" in Settings → Language Model Chat Provider: Bedrock → Auth 
 - Multi-turn conversations
 - Streaming responses
 - Tool/function calling for compatible models
-- Vision/image input for compatible models (Claude models)
-- Extended thinking for compatible models (shows model's reasoning process)
-- Support for all AWS regions
+- Vision/image input for compatible models (Claude, Amazon Nova, Pixtral) — see [Limitations](#limitations)
+- Support across AWS regions
 - Cross-region inference profiles for optimized model access and routing
 
 ## Available Models
 
-The extension exposes all Bedrock foundation models with streaming capabilities across all AWS regions:
+The extension exposes every Bedrock foundation model with streaming support — they appear
+automatically in the chat model dropdown for your region. A snapshot of what's currently
+available includes:
 
-- Claude Sonnet 4.5
-- Claude Sonnet 4 / 3.7 (supports extended thinking)
-- Llama 3.1/3.2
-- Mistral Large
-- And more...
-
-**Extended Thinking**: Claude 3.7 Sonnet and Claude 4 models support extended thinking mode, which shows the model's internal reasoning process before providing answers. When enabled, temperature is automatically set to 1.0 for optimal results.
+- **Anthropic Claude** — Opus 4.8 / 4.7 / 4.6 / 4.5, Sonnet 4.6 / 4.5 / 4, Haiku 4.5 (all vision-capable)
+- **Amazon Nova** — Nova 2 Lite, Nova Pro, Nova Lite, Nova Micro
+- **Meta Llama** — Llama 3.2
+- **Mistral AI** — Devstral 2, Pixtral Large
+- **OpenAI** — gpt-oss-120b / 20b
+- **Qwen** — Qwen3 235B, Qwen3-Coder, Qwen3 32B
+- And more (MiniMax, NVIDIA Nemotron, GLM, …)
 
 ## Configuration
 
@@ -79,8 +80,6 @@ Configure the extension through VS Code settings (Cmd/Ctrl + , then search for "
 - **Profile**: AWS profile name (when using profile method)
 - **Access Key ID / Secret Access Key**: AWS credentials (when using access-keys method)
 - **Session Token**: AWS Session Token for temporary credentials (optional, used with access-keys method)
-- **Enable Extended Thinking**: Enable extended thinking mode for compatible Claude models (default: disabled)
-- **Thinking Budget Tokens**: Maximum tokens allocated for the thinking process (1024-32768, default: 1024)
 
 ### Commands
 
@@ -95,7 +94,7 @@ Model selection is integrated into VS Code's chat interface:
 2. Click the model dropdown at the top of the chat panel
 3. Select any available Bedrock model
 
-All models with streaming support across all AWS regions will appear in the dropdown.
+All models with streaming support in your region will appear in the dropdown.
 
 ## Development
 
@@ -117,6 +116,7 @@ Press F5 to launch an Extension Development Host.
 
 ## Limitations
 
+- **Image/vision input requires being signed in to GitHub Copilot Chat.** When signed out (using Bedrock purely as a bring-your-own-key provider), VS Code's chat agent strips image attachments before they reach *any* model provider — so vision-capable Bedrock models will only receive the text. This is a VS Code Copilot Chat gate, not a limitation of this extension. Text and tool calling work either way.
 - Some models don't support streaming with tool calls simultaneously
 - Rate limits apply based on your AWS account settings
 

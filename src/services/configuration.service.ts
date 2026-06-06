@@ -63,35 +63,4 @@ export class ConfigurationService {
 		const config = vscode.workspace.getConfiguration(this.configSection);
 		return config.get<string>('sessionToken');
 	}
-
-	/**
-	 * Check if thinking (extended reasoning) is enabled
-	 */
-	isThinkingEnabled(): boolean {
-		const config = vscode.workspace.getConfiguration(this.configSection);
-		return config.get<boolean>('thinkingEnabled', false);
-	}
-
-	/**
-	 * Get thinking budget tokens (minimum 1024)
-	 */
-	getThinkingBudgetTokens(): number {
-		const config = vscode.workspace.getConfiguration(this.configSection);
-		const budget = config.get<number>('thinkingBudgetTokens', 1024);
-		return Math.max(1024, budget);
-	}
-
-	/**
-	 * Get thinking configuration if enabled
-	 */
-	getThinkingConfig(): { type: 'enabled' | 'disabled'; budget_tokens?: number } | undefined {
-		if (!this.isThinkingEnabled()) {
-			return undefined;
-		}
-
-		return {
-			type: 'enabled',
-			budget_tokens: this.getThinkingBudgetTokens(),
-		};
-	}
 }

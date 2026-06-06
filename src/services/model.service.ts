@@ -113,18 +113,6 @@ export class ModelService {
 	}
 
 	/**
-	 * Check if a model supports thinking/reasoning
-	 */
-	async supportsThinking(modelId: string): Promise<boolean> {
-		const thinkingConfig = this.configService.getThinkingConfig();
-		if (!thinkingConfig) {
-			return false;
-		}
-
-		return await this.openRouterClient.supportsThinking(modelId);
-	}
-
-	/**
 	 * Get cached chat endpoints
 	 */
 	getChatEndpoints(): { model: string; modelMaxPromptTokens: number }[] {
