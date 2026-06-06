@@ -63,4 +63,16 @@ export class ConfigurationService {
 		const config = vscode.workspace.getConfiguration(this.configSection);
 		return config.get<string>('sessionToken');
 	}
+
+	/**
+	 * Get model ID overrides from configuration.
+	 * Returns a map of model ID -> override ID. Keys are standard model IDs
+	 * shown in the VS Code chat dropdown; values are the actual Bedrock model IDs
+	 * to use in API calls (e.g., GovCloud or cross-region inference profile IDs).
+	 * Returns undefined if no overrides are configured.
+	 */
+	getModelOverrides(): Record<string, string> | undefined {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		return config.get<Record<string, string>>('modelOverrides');
+	}
 }

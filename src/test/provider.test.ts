@@ -8,6 +8,10 @@ import { convertTools } from "../converters/tools";
 import { validateRequest, validateTools } from "../validation";
 import { tryParseJSONObject } from "../converters/schema";
 import { ToolCallBufferManager } from "../tool-buffer";
+import { ChatRequestHandler } from "../providers/chat-request.handler";
+import { ModelService } from "../services/model.service";
+import { BedrockClient } from "../clients/bedrock.client";
+import { StreamProcessor } from "../stream-processor";
 
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
@@ -260,6 +264,138 @@ suite("Bedrock Chat Provider Extension", () => {
 			buffer.appendArgs(2, '{"query":"different"}');
 			await buffer.tryEmit(2, progress);
 			assert.equal(emitted.length, 2);
+		});
+	});
+
+	suite("ChatRequestHandler model overrides", () => {
+		test("uses overridden model ID when override is present", async () => {
+			const modelId = "anthropic.claude-3-5-sonnet-20241022-v2:0";
+			const overrideId = "us.anthropic.claude-3-5-sonnet-20241022-v2:0";
+
+			const configService = {
+				getRegion: () => "us-east-1",
+				getModelOverrides: () => ({ [modelId]: overrideId }),
+			} as unknown as ConfigurationService;
+
+			const authConfig = { method: "apiKey" as const, apiKey: "fake-key" };
+			const authService = {
+				getAuthConfig: () => authConfig,
+				getCredentials: () => ({ accessKeyId: "fake", secretAccessKey: "fake", sessionToken: "fake" }),
+			} as unknown as AuthenticationService;
+
+			let capturedInput: any = null;
+			const bedrockClient = {
+				setRegion: () => {},
+				startConversationStream: async (creds: any, input: any) => {
+					capturedInput = input;
+					return { [Symbol.asyncIterator]: async function* () {} };
+				},
+			} as unknown as BedrockClient;
+
+			const streamProcessor = {
+				processStream: async () => {},
+			} as unknown as StreamProcessor;
+
+			const handler = new ChatRequestHandler(
+				{} as ModelService,
+				authService,
+				configService
+			);
+
+			// Replace private fields via any cast
+			(handler as any).bedrockClient = bedrockClient;
+			(handler as any).streamProcessor = streamProcessor;
+
+			const model: vscode.LanguageModelChatInformation = {
+				id: modelId,
+				name: "Claude",
+				family: "bedrock",
+				version: "1",
+				maxInputTokens: 100000,
+				maxOutputTokens: 4096,
+				capabilities: {},
+			} as any;
+
+			const messages: vscode.LanguageModelChatMessage[] = [
+				{ role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart("hi")], name: undefined },
+			];
+
+			const tokenSource = new vscode.CancellationTokenSource();
+			await handler.handleChatRequest(
+				model,
+				messages,
+				{} as vscode.LanguageModelChatRequestHandleOptions,
+				{ report: () => {} },
+				tokenSource.token
+			);
+			tokenSource.dispose();
+
+			assert.ok(capturedInput !== null, "requestInput should have been captured");
+			assert.equal(capturedInput.modelId, overrideId, "modelId should be the overridden value");
+		});
+
+		test("falls back to default model ID when no override is present", async () => {
+			const modelId = "anthropic.claude-3-5-sonnet-20241022-v2:0";
+
+			const configService = {
+				getRegion: () => "us-east-1",
+				getModelOverrides: () => ({ "some.other.model": "some.override" }),
+			} as unknown as ConfigurationService;
+
+			const authConfig = { method: "apiKey" as const, apiKey: "fake-key" };
+			const authService = {
+				getAuthConfig: () => authConfig,
+				getCredentials: () => ({ accessKeyId: "fake", secretAccessKey: "fake", sessionToken: "fake" }),
+			} as unknown as AuthenticationService;
+
+			let capturedInput: any = null;
+			const bedrockClient = {
+				setRegion: () => {},
+				startConversationStream: async (creds: any, input: any) => {
+					capturedInput = input;
+					return { [Symbol.asyncIterator]: async function* () {} };
+				},
+			} as unknown as BedrockClient;
+
+			const streamProcessor = {
+				processStream: async () => {},
+			} as unknown as StreamProcessor;
+
+			const handler = new ChatRequestHandler(
+				{} as ModelService,
+				authService,
+				configService
+			);
+
+			(handler as any).bedrockClient = bedrockClient;
+			(handler as any).streamProcessor = streamProcessor;
+
+			const model: vscode.LanguageModelChatInformation = {
+				id: modelId,
+				name: "Claude",
+				family: "bedrock",
+				version: "1",
+				maxInputTokens: 100000,
+				maxOutputTokens: 4096,
+				capabilities: {},
+			} as any;
+
+			const messages: vscode.LanguageModelChatMessage[] = [
+				{ role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart("hi")], name: undefined },
+			];
+
+			const tokenSource = new vscode.CancellationTokenSource();
+			await handler.handleChatRequest(
+				model,
+				messages,
+				{} as vscode.LanguageModelChatRequestHandleOptions,
+				{ report: () => {} },
+				tokenSource.token
+			);
+			tokenSource.dispose();
+
+			assert.ok(capturedInput !== null, "requestInput should have been captured");
+			assert.equal(capturedInput.modelId, modelId, "modelId should fall back to the default model ID");
 		});
 	});
 });
