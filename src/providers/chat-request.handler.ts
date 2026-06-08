@@ -122,6 +122,14 @@ export class ChatRequestHandler {
 
 			const requestInput = buildRequestInput({ model, converted, options, profile, toolConfig });
 
+			// Resolve model ID through overrides (GovCloud, cross-region inference profiles)
+			const overrides = this.configService.getModelOverrides();
+			if (overrides && overrides[model.id] !== undefined) {
+				const resolvedId = overrides[model.id];
+				logger.log(`[Chat Request Handler] Model override: ${model.id} → ${resolvedId}`);
+				requestInput.modelId = resolvedId;
+			}
+
 			logger.log("[Chat Request Handler] Starting streaming request");
 			const credentials = this.authService.getCredentials(authConfig);
 			const stream = await this.bedrockClient.startConversationStream(credentials, requestInput);

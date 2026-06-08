@@ -79,6 +79,17 @@
 						"type": "string",
 						"description": "AWS Session Token for temporary credentials (optional)",
 						"title": "Session Token"
+					},
+					"languageModelChatProvider.bedrock.modelOverrides": {
+						"type": "object",
+						"additionalProperties": {
+							"type": "string"
+						},
+						"description": "Map of model ID overrides. Use this to remap standard Bedrock model IDs to account-specific IDs (e.g., GovCloud or cross-region inference profiles). Keys are the model IDs shown in the VS Code chat dropdown; values are the actual Bedrock model IDs to use in API calls.",
+						"example": {
+							"anthropic.claude-sonnet-4-5-20250929-v1:0": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+						},
+						"title": "Model ID Overrides"
 					}
 				}
 			},
