@@ -5,6 +5,7 @@ import { BedrockClient } from "../clients/bedrock.client";
 import { OpenRouterClient } from "./openrouter.client";
 import { AuthenticationService } from "./authentication.service";
 import { ConfigurationService } from "./configuration.service";
+import { getModelProfile } from "../profiles";
 import { logger } from "../logger";
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
@@ -86,6 +87,7 @@ export class ModelService {
 			const maxInput = properties?.contextLength ?? DEFAULT_CONTEXT_LENGTH;
 			const maxOutput = properties?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 			const vision = m.inputModalities.includes("IMAGE");
+			const profile = getModelProfile(modelIdToUse);
 
 			const modelInfo: LanguageModelChatInformation = {
 				id: modelIdToUse,
@@ -101,6 +103,40 @@ export class ModelService {
 					imageInput: vision,
 				},
 			};
+
+			// Expose a thinking-effort control in the model picker for models that
+			// support reasoning. This uses the proposed `configurationSchema` API:
+			// a property with `group: "navigation"` renders as a primary action in
+			// the picker, and the chosen value is delivered back to the provider via
+			// `options.modelConfiguration` on each request.
+			if (profile.supportsThinking && profile.reasoningApi !== 'none') {
+				const isAdaptive = profile.reasoningApi === 'effort';
+				const effortEnum = isAdaptive
+					? ['max', 'xhigh', 'high', 'medium', 'low']
+					: ['max', 'high', 'medium', 'low'];
+				const effortLabels = isAdaptive
+					? ['Max', 'Extra High', 'High', 'Medium', 'Low']
+					: ['Max', 'High', 'Medium', 'Low'];
+
+				(modelInfo as unknown as { configurationSchema?: unknown }).configurationSchema = {
+					properties: {
+						effort: {
+							type: 'string',
+							enum: effortEnum,
+							enumItemLabels: effortLabels,
+							default: this.configService.getEffort(),
+							description: 'Reasoning effort. Higher effort lets the model think longer before answering.',
+							group: 'navigation',
+						},
+						thinkingEnabled: {
+							type: 'boolean',
+							default: this.configService.getThinkingEnabled(),
+							description: 'Enable extended thinking / reasoning for this model.',
+						},
+					},
+				};
+			}
+
 			infos.push(modelInfo);
 		}
 

@@ -8,7 +8,7 @@
 		"type": "git",
 		"url": "https://github.com/aristide1997/bedrock-vscode-chat"
 	},
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"engines": {
 		"vscode": "^1.108.0"
 	},
@@ -44,7 +44,12 @@
 				},
 				"languageModelChatProvider.bedrock.authMethod": {
 					"type": "string",
-					"enum": ["api-key", "profile", "access-keys", "default"],
+					"enum": [
+						"api-key",
+						"profile",
+						"access-keys",
+						"default"
+					],
 					"enumDescriptions": [
 						"Use an AWS Bedrock API Key (Bearer Token)",
 						"Use an AWS profile from ~/.aws/credentials",
@@ -75,13 +80,46 @@
 					"description": "AWS Secret Access Key (only used when authMethod is 'access-keys')",
 					"title": "Secret Access Key"
 				},
-					"languageModelChatProvider.bedrock.sessionToken": {
-						"type": "string",
-						"description": "AWS Session Token for temporary credentials (optional)",
-						"title": "Session Token"
-					}
+				"languageModelChatProvider.bedrock.sessionToken": {
+					"type": "string",
+					"description": "AWS Session Token for temporary credentials (optional)",
+					"title": "Session Token"
+				},
+				"languageModelChatProvider.bedrock.thinking.enabled": {
+					"type": "boolean",
+					"description": "Enable extended thinking / reasoning for models that support it (Anthropic Claude 3.7+ and Claude 4 families). Reasoning is streamed to the chat UI before the answer.",
+					"default": true,
+					"title": "Enable Thinking"
+				},
+				"languageModelChatProvider.bedrock.effort": {
+					"type": "string",
+					"enum": [
+						"max",
+						"high",
+						"medium",
+						"low"
+					],
+					"enumDescriptions": [
+						"Maximum reasoning effort (longest thinking)",
+						"High reasoning effort",
+						"Medium reasoning effort",
+						"Low reasoning effort (fastest)"
+					],
+					"description": "Reasoning effort level. For newer models (Opus 4.1+/Sonnet 4.5+) this maps to the adaptive 'output_config.effort' API and the model chooses its own thinking budget. For older thinking models it derives a fixed token budget.",
+					"default": "max",
+					"title": "Reasoning Effort"
+				},
+				"languageModelChatProvider.bedrock.thinking.budgetTokens": {
+					"type": [
+						"number",
+						"null"
+					],
+					"description": "Explicit thinking token budget override for LEGACY fixed-budget models only (Claude 3.7 / 4.0). Leave null to derive the budget from the effort level. Ignored by newer adaptive-effort models.",
+					"default": null,
+					"title": "Thinking Budget Tokens"
 				}
-			},
+			}
+		},
 		"languageModelChatProviders": [
 			{
 				"vendor": "bedrock",

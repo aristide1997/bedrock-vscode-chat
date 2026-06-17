@@ -16,6 +16,20 @@ export interface ModelProfile {
 	 * (Claude 4+ models have deprecated temperature)
 	 */
 	supportsTemperature: boolean;
+	/**
+	 * Whether the model supports extended thinking / reasoning
+	 * (Anthropic Claude 3.7+ and Claude 4 families on Bedrock)
+	 */
+	supportsThinking: boolean;
+	/**
+	 * Which reasoning request API the model expects:
+	 * - 'effort':  newer adaptive API — `output_config: { effort }` (Opus 4.8, Sonnet 4.6+).
+	 *              The model adapts its own thinking budget; we do NOT send budget_tokens.
+	 * - 'budget':  legacy fixed API — `reasoning_config: { type: 'enabled', budget_tokens }`
+	 *              (Claude 3.7, Claude 4.0/4.5).
+	 * - 'none':    no reasoning support.
+	 */
+	reasoningApi: 'effort' | 'budget' | 'none';
 }
 
 /**
@@ -28,6 +42,8 @@ export function getModelProfile(modelId: string): ModelProfile {
 		supportsToolChoice: false,
 		toolResultFormat: 'text',
 		supportsTemperature: true,
+		supportsThinking: false,
+		reasoningApi: 'none',
 	};
 
 	// Split the model name into parts
@@ -49,10 +65,28 @@ export function getModelProfile(modelId: string): ModelProfile {
 		case 'anthropic': {
 			// Claude 4+ models have deprecated the temperature parameter
 			const isClaudeV4OrNewer = /claude-(opus|sonnet|haiku)-4/.test(modelId);
+			// Extended thinking is supported on Claude 3.7 (Sonnet) and all Claude 4 families
+			const supportsThinking = /claude-3-7/.test(modelId) || isClaudeV4OrNewer;
+			// Newer models use the adaptive thinking API: `thinking: { type: "adaptive" }`
+			// combined with `output_config: { effort }`, where the model chooses its own
+			// thinking budget. This is recommended for Claude 4.6+ (e.g. Opus 4.6/4.7/4.8,
+			// Sonnet 4.6). Older thinking models (Claude 3.7, Sonnet/Opus 4.0–4.5) use the
+			// deprecated fixed `reasoning_config: { type: "enabled", budget_tokens }` API.
+			const usesEffortApi =
+				/claude-opus-4-([6-9]\d*)/.test(modelId) ||
+				/claude-sonnet-4-([6-9]\d*)/.test(modelId) ||
+				/claude-haiku-4-([6-9]\d*)/.test(modelId);
+			const reasoningApi: ModelProfile['reasoningApi'] = !supportsThinking
+				? 'none'
+				: usesEffortApi
+					? 'effort'
+					: 'budget';
 			return {
 				supportsToolChoice: true,
 				toolResultFormat: 'text',
 				supportsTemperature: !isClaudeV4OrNewer,
+				supportsThinking,
+				reasoningApi,
 			};
 		}
 
@@ -62,6 +96,8 @@ export function getModelProfile(modelId: string): ModelProfile {
 				supportsToolChoice: false,
 				toolResultFormat: 'json',
 				supportsTemperature: true,
+				supportsThinking: false,
+				reasoningApi: 'none',
 			};
 
 		case 'amazon':
@@ -71,6 +107,8 @@ export function getModelProfile(modelId: string): ModelProfile {
 					supportsToolChoice: true,
 					toolResultFormat: 'text',
 					supportsTemperature: true,
+					supportsThinking: false,
+					reasoningApi: 'none',
 				};
 			}
 			return defaultProfile;

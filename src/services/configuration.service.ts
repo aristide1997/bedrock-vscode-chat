@@ -63,4 +63,31 @@ export class ConfigurationService {
 		const config = vscode.workspace.getConfiguration(this.configSection);
 		return config.get<string>('sessionToken');
 	}
+
+	/**
+	 * Whether extended thinking / reasoning is enabled.
+	 * Only applied to models whose profile reports supportsThinking.
+	 */
+	getThinkingEnabled(): boolean {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		return config.get<boolean>('thinking.enabled') ?? true;
+	}
+
+	/**
+	 * Reasoning effort level. Maps to a thinking token budget.
+	 */
+	getEffort(): 'max' | 'high' | 'medium' | 'low' {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		return config.get<'max' | 'high' | 'medium' | 'low'>('effort') ?? 'max';
+	}
+
+	/**
+	 * Explicit thinking budget token override. When set (> 0), it takes
+	 * precedence over the effort-derived budget. null/0 means "derive from effort".
+	 */
+	getThinkingBudgetTokens(): number | undefined {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		const value = config.get<number | null>('thinking.budgetTokens');
+		return typeof value === 'number' && value > 0 ? value : undefined;
+	}
 }

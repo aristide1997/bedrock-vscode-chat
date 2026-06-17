@@ -6,7 +6,8 @@ import { logger } from "../logger";
 
 export function convertTools(
 	options: vscode.LanguageModelChatRequestHandleOptions,
-	modelId: string
+	modelId: string,
+	thinkingActive = false
 ): BedrockToolConfig | undefined {
 	const tools = options.tools ?? [];
 	if (!tools || tools.length === 0) {
@@ -35,7 +36,10 @@ export function convertTools(
 	};
 
 	if (profile.supportsToolChoice) {
-		if (options.toolMode === vscode.LanguageModelChatToolMode.Required) {
+		// Extended thinking is incompatible with forced tool use: Anthropic only
+		// allows tool_choice "auto" (or "none") when thinking is active. Forcing a
+		// specific tool returns an error, so we downgrade to "auto" in that case.
+		if (options.toolMode === vscode.LanguageModelChatToolMode.Required && !thinkingActive) {
 			if (tools.length !== 1) {
 				logger.error("[Tool Converter] ToolMode.Required but multiple tools:", tools.length);
 				throw new Error("LanguageModelChatToolMode.Required is not supported with more than one tool");
@@ -46,6 +50,9 @@ export function convertTools(
 				},
 			};
 		} else {
+			if (options.toolMode === vscode.LanguageModelChatToolMode.Required && thinkingActive) {
+				logger.warn("[Tool Converter] ToolMode.Required ignored because extended thinking is active (Anthropic only allows tool_choice auto with thinking)");
+			}
 			toolConfig.toolChoice = { auto: {} };
 		}
 	}

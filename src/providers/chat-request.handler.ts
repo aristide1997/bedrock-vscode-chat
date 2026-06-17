@@ -28,6 +28,13 @@ export class ChatRequestHandler {
 	private bedrockClient: BedrockClient;
 	private streamProcessor: StreamProcessor;
 	private tokenEstimator: TokenEstimator;
+	/**
+	 * Reasoning captured from the most recent assistant turn, keyed by a stable
+	 * conversation signature. Replayed into the next request so interleaved
+	 * thinking + tool use round-trips correctly (Anthropic requires the signed
+	 * reasoning block on follow-up tool turns).
+	 */
+	private lastReasoning: { text: string; signature?: string } | undefined;
 
 	constructor(
 		private readonly modelService: ModelService,
@@ -88,12 +95,13 @@ export class ChatRequestHandler {
 				logger.log(`[Chat Request Handler] Message ${idx} (${msg.role}):`, partTypes);
 			});
 
-			const converted = convertMessages(messages, model.id);
+			const converted = convertMessages(messages, model.id, this.lastReasoning);
 			validateRequest(messages);
 
 			logger.log("[Chat Request Handler] Converted to Bedrock messages:", converted.messages.length);
 			converted.messages.forEach((msg, idx) => {
 				const contentTypes = msg.content.map(c => {
+					if ('reasoningContent' in c) return 'reasoning';
 					if ('text' in c) return 'text';
 					if ('image' in c) return 'image';
 					if ('toolUse' in c) return 'toolUse';
@@ -102,12 +110,34 @@ export class ChatRequestHandler {
 				logger.log(`[Chat Request Handler] Bedrock message ${idx} (${msg.role}):`, contentTypes);
 			});
 
-			const toolConfig = convertTools(options, model.id);
 			const profile = getModelProfile(model.id);
 
 			if (options.tools && options.tools.length > 128) {
 				throw new Error("Cannot have more than 128 tools per request.");
 			}
+
+			// Resolve thinking settings. The model picker (proposed `configurationSchema`
+			// API) delivers the user's selection via `options.modelConfiguration`; when
+			// present it takes precedence over the workspace/global settings defaults.
+			const modelConfig = (options as unknown as {
+				modelConfiguration?: { effort?: unknown; thinkingEnabled?: unknown };
+			}).modelConfiguration;
+
+			const validEfforts = ['max', 'xhigh', 'high', 'medium', 'low'];
+			const pickerEffort =
+				typeof modelConfig?.effort === 'string' && validEfforts.includes(modelConfig.effort)
+					? (modelConfig.effort as 'max' | 'xhigh' | 'high' | 'medium' | 'low')
+					: undefined;
+			const pickerEnabled =
+				typeof modelConfig?.thinkingEnabled === 'boolean' ? modelConfig.thinkingEnabled : undefined;
+
+			const thinkingEnabled = pickerEnabled ?? this.configService.getThinkingEnabled();
+			const thinkingEffort = pickerEffort ?? this.configService.getEffort();
+			const thinkingActive = thinkingEnabled && profile.supportsThinking && profile.reasoningApi !== 'none';
+
+			// Build tool config AFTER resolving thinking: forced tool choice must be
+			// downgraded to "auto" when thinking is active (Anthropic constraint).
+			const toolConfig = convertTools(options, model.id, thinkingActive);
 
 			const inputTokenCount = this.tokenEstimator.estimateMessagesTokens(messages);
 			const toolTokenCount = this.tokenEstimator.estimateToolTokens(toolConfig);
@@ -120,7 +150,26 @@ export class ChatRequestHandler {
 				throw new Error("Message exceeds token limit.");
 			}
 
-			const requestInput = buildRequestInput({ model, converted, options, profile, toolConfig });
+			const requestInput = buildRequestInput({
+				model,
+				converted,
+				options,
+				profile,
+				toolConfig,
+				thinking: {
+					enabled: thinkingEnabled,
+					effort: thinkingEffort,
+					budgetTokens: this.configService.getThinkingBudgetTokens(),
+				},
+			});
+
+			if (profile.supportsThinking && thinkingEnabled) {
+				logger.log("[Chat Request Handler] Thinking enabled", {
+					effort: thinkingEffort,
+					source: pickerEffort ? 'model-picker' : 'settings',
+					reasoning_config: (requestInput as any).additionalModelRequestFields?.reasoning_config,
+				});
+			}
 
 			logger.log("[Chat Request Handler] Starting streaming request");
 			const credentials = this.authService.getCredentials(authConfig);
@@ -129,6 +178,12 @@ export class ChatRequestHandler {
 			logger.log("[Chat Request Handler] Processing stream events");
 			await this.streamProcessor.processStream(stream, trackingProgress, token);
 			logger.log("[Chat Request Handler] Finished processing stream");
+
+			// Persist the signed reasoning from this turn so it can be replayed if
+			// the model just requested a tool (the next request will carry the tool
+			// results and must include this thinking block). Cleared when a turn
+			// produces no reasoning (e.g. thinking disabled or skipped).
+			this.lastReasoning = this.streamProcessor.getCapturedReasoning();
 		} catch (err) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			logger.error("[Chat Request Handler] Chat request failed", {
