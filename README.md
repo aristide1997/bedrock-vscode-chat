@@ -1,6 +1,8 @@
-# AWS Bedrock Provider for GitHub Copilot Chat
+# AWS Bedrock Provider for GitHub Copilot Chat — With Inference Profiles Support
 
-Integrates AWS Bedrock foundation models into GitHub Copilot Chat for VS Code.
+> **⚠️ Fork Notice:** This is a fork of [aristide1997/bedrock-vscode-chat](https://github.com/aristide1997/bedrock-vscode-chat) with added **application inference profile override support**. If the upstream project adds this feature, this fork will likely be deprecated. All other credit goes to the original author.
+
+Integrates AWS Bedrock foundation models into GitHub Copilot Chat for VS Code, with support for application inference profile overrides.
 
 ![Demo](assets/demo.gif)
 
@@ -53,6 +55,7 @@ Select "default" in Settings → Language Model Chat Provider: Bedrock → Auth 
 - Vision/image input for compatible models (Claude, Amazon Nova, Pixtral) — see [Limitations](#limitations)
 - Support across AWS regions
 - Cross-region inference profiles for optimized model access and routing
+- **Application inference profile overrides** — route specific models through your permitted application inference profile ARNs
 
 ## Available Models
 
@@ -80,6 +83,20 @@ Configure the extension through VS Code settings (Cmd/Ctrl + , then search for "
 - **Profile**: AWS profile name (when using profile method)
 - **Access Key ID / Secret Access Key**: AWS credentials (when using access-keys method)
 - **Session Token**: AWS Session Token for temporary credentials (optional, used with access-keys method)
+- **Inference Profile Overrides**: Map model IDs to application inference profile ARNs for models that require them (see [Inference Profiles](#inference-profiles) below)
+
+### Inference Profiles
+
+If you use application inference profiles (common in `ap-southeast-2` and other regions), you can map bare model IDs to your permitted profile ARNs:
+
+```json
+"languageModelChatProvider.bedrock.inferenceProfileOverrides": {
+  "anthropic.claude-sonnet-4-6": "arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/abc123",
+  "anthropic.claude-opus-4-8": "arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/def456"
+}
+```
+
+The extension also automatically discovers and uses system inference profiles (`apac.*`, `au.*`, `global.*`) when available in your region.
 
 ### Commands
 
@@ -106,7 +123,7 @@ Common scripts:
 - Package: `npm run vscode:prepublish`
 
 ```bash
-git clone https://github.com/aristide1997/bedrock-vscode-chat
+git clone https://github.com/shonos/bedrock-vscode-chat
 cd bedrock-vscode-chat
 npm install
 npm run compile

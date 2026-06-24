@@ -122,6 +122,14 @@ export class ChatRequestHandler {
 
 			const requestInput = buildRequestInput({ model, converted, options, profile, toolConfig });
 
+			// Substitute invocation target (override ARN or system profile) at the wire level.
+			// This keeps the bare model ID for getModelProfile() so capability detection
+			// (e.g. temperature suppression for Claude 4+) still works correctly.
+			const invocationTarget = this.modelService.getInvocationTarget(model.id);
+			if (invocationTarget) {
+				requestInput.modelId = invocationTarget;
+			}
+
 			logger.log("[Chat Request Handler] Starting streaming request");
 			const credentials = this.authService.getCredentials(authConfig);
 			const stream = await this.bedrockClient.startConversationStream(credentials, requestInput);

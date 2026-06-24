@@ -18,6 +18,12 @@ export class ModelService {
 	private bedrockClient: BedrockClient;
 	private openRouterClient: OpenRouterClient;
 	private chatEndpoints: { model: string; modelMaxPromptTokens: number }[] = [];
+	/**
+	 * Maps a bare model ID to the actual target to use at invocation time.
+	 * This is either a user-provided override ARN or a system inference profile ID.
+	 * The public model ID stays bare so capability detection (getModelProfile) still works.
+	 */
+	private invocationTargets = new Map<string, string>();
 
 	constructor(
 		private readonly authService: AuthenticationService,
@@ -70,25 +76,41 @@ export class ModelService {
 		}
 
 		const infos: LanguageModelChatInformation[] = [];
-		const regionPrefix = region.split("-")[0];
+		const regionGeo = region.startsWith("ap-") ? "apac" : region.split("-")[0];
+		const overrides = this.configService.getInferenceProfileOverrides();
+		this.invocationTargets.clear();
 
 		for (const m of models) {
 			if (!m.responseStreamingSupported || !m.outputModalities.includes("TEXT")) {
 				continue;
 			}
 
-			const inferenceProfileId = `${regionPrefix}.${m.modelId}`;
-			const hasInferenceProfile = availableProfileIds.has(inferenceProfileId);
-			const modelIdToUse = hasInferenceProfile ? inferenceProfileId : m.modelId;
+			// Resolution order: user override → system inference profile → bare ID
+			const overrideTarget = overrides[m.modelId];
+			if (overrideTarget) {
+				this.invocationTargets.set(m.modelId, overrideTarget);
+			} else {
+				const candidates = [...availableProfileIds].filter((pid) => pid.endsWith(`.${m.modelId}`));
+				const matchingProfileId =
+					candidates.find((pid) => pid.startsWith(`${regionGeo}.`)) ??
+					candidates.find((pid) => pid.startsWith("au.")) ??
+					candidates.find((pid) => pid.startsWith("global.")) ??
+					candidates[0];
+				if (matchingProfileId) {
+					this.invocationTargets.set(m.modelId, matchingProfileId);
+				}
+			}
+
+			const hasInferenceProfile = this.invocationTargets.has(m.modelId);
 
 			// Try to get model properties from OpenRouter, fall back to defaults
-			const properties = await this.openRouterClient.getModelProperties(modelIdToUse);
+			const properties = await this.openRouterClient.getModelProperties(m.modelId);
 			const maxInput = properties?.contextLength ?? DEFAULT_CONTEXT_LENGTH;
 			const maxOutput = properties?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 			const vision = m.inputModalities.includes("IMAGE");
 
 			const modelInfo: LanguageModelChatInformation = {
-				id: modelIdToUse,
+				id: m.modelId,
 				name: m.modelName,
 				tooltip: `AWS Bedrock - ${m.providerName}${hasInferenceProfile ? ' (Cross-Region)' : ''}`,
 				detail: `${m.providerName} • ${hasInferenceProfile ? 'Multi-Region' : region}`,
@@ -117,5 +139,13 @@ export class ModelService {
 	 */
 	getChatEndpoints(): { model: string; modelMaxPromptTokens: number }[] {
 		return this.chatEndpoints;
+	}
+
+	/**
+	 * Get the invocation target (override ARN or system profile ID) for a bare model ID.
+	 * Returns undefined if the model should be invoked with its bare ID directly.
+	 */
+	getInvocationTarget(bareModelId: string): string | undefined {
+		return this.invocationTargets.get(bareModelId);
 	}
 }
