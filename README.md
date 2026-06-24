@@ -80,6 +80,26 @@ Configure the extension through VS Code settings (Cmd/Ctrl + , then search for "
 - **Profile**: AWS profile name (when using profile method)
 - **Access Key ID / Secret Access Key**: AWS credentials (when using access-keys method)
 - **Session Token**: AWS Session Token for temporary credentials (optional, used with access-keys method)
+- **Inference Profile Overrides**: Map model IDs to [application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/application-inference-profiles.html) ARNs or IDs. Use this to route specific models through your own application inference profiles instead of the default system profiles.
+
+#### Setting up Inference Profile Overrides
+
+Application inference profiles let you define custom throughput, routing, and tagging for Bedrock invocations. To route a model through your own profile:
+
+1. [Create an application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/application-inference-profiles-create.html) in the AWS Console.
+2. Open VS Code Settings (`Ctrl/Cmd + ,`), search for **Bedrock**, and locate **Inference Profile Overrides**.
+3. Click **Edit in settings.json** and add a mapping:
+
+```json
+"languageModelChatProvider.bedrock.inferenceProfileOverrides": {
+    "anthropic.claude-opus-4-8-20250514": "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123",
+    "anthropic.claude-sonnet-4-6": "arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/def456"
+}
+```
+
+You can use either the full ARN or just the profile ID (e.g., `"abc123"`) — both are accepted.
+
+**Note**: When an override is set, the model still appears under its bare ID in the model picker and capability detection still works against the base model. The override substitution happens only at invocation time.
 
 ### Commands
 
