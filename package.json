@@ -44,7 +44,12 @@
 				},
 				"languageModelChatProvider.bedrock.authMethod": {
 					"type": "string",
-					"enum": ["api-key", "profile", "access-keys", "default"],
+					"enum": [
+						"api-key",
+						"profile",
+						"access-keys",
+						"default"
+					],
 					"enumDescriptions": [
 						"Use an AWS Bedrock API Key (Bearer Token)",
 						"Use an AWS profile from ~/.aws/credentials",
@@ -75,13 +80,22 @@
 					"description": "AWS Secret Access Key (only used when authMethod is 'access-keys')",
 					"title": "Secret Access Key"
 				},
-					"languageModelChatProvider.bedrock.sessionToken": {
-						"type": "string",
-						"description": "AWS Session Token for temporary credentials (optional)",
-						"title": "Session Token"
+				"languageModelChatProvider.bedrock.sessionToken": {
+					"type": "string",
+					"description": "AWS Session Token for temporary credentials (optional)",
+					"title": "Session Token"
+				},
+				"languageModelChatProvider.bedrock.inferenceProfileOverrides": {
+					"type": "object",
+					"description": "Map of model IDs to inference profile ARNs or IDs. Use this to route specific models through application inference profiles. Example: { \"anthropic.claude-sonnet-4-6\": \"arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/abc123\" }",
+					"title": "Inference Profile Overrides",
+					"default": {},
+					"additionalProperties": {
+						"type": "string"
 					}
 				}
-			},
+			}
+		},
 		"languageModelChatProviders": [
 			{
 				"vendor": "bedrock",
