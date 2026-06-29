@@ -117,19 +117,82 @@ export class BedrockClient {
 		credentials: AwsCredentialIdentity | Provider<AwsCredentialIdentity> | undefined,
 		input: ConverseStreamCommandInput
 	): Promise<AsyncIterable<any>> {
-		const client = new BedrockRuntimeClient({
-			region: this.region,
-			credentials,
-			...proxyRequestHandler(),
-		});
+		try {
+			const client = new BedrockRuntimeClient({
+				region: this.region,
+				credentials,
+				...proxyRequestHandler(),
+			});
 
-		const command = new ConverseStreamCommand(input);
-		const response = await client.send(command);
+			const command = new ConverseStreamCommand(input);
+			const response = await client.send(command);
 
-		if (!response.stream) {
-			throw new Error("No stream in response");
+			if (!response.stream) {
+				throw new Error("No stream in response");
+			}
+
+			return response.stream;
+		} catch (err) {
+			// Enhanced error handling to prevent "unknown" errors in ToolCallingLoop
+			const errorMessage = this.formatAwsError(err);
+			logger.error("[Bedrock Client] Failed to start conversation stream", {
+				error: errorMessage,
+				modelId: input.modelId,
+			});
+			throw new Error(errorMessage);
+		}
+	}
+
+	/**
+	 * Format AWS SDK errors into readable messages
+	 */
+	private formatAwsError(err: unknown): string {
+		if (!err) {
+			return "Unknown error occurred";
 		}
 
-		return response.stream;
+		// Handle AWS SDK errors
+		if (typeof err === 'object' && err !== null) {
+			const awsError = err as any;
+			
+			// AWS SDK v3 error structure
+			if (awsError.$metadata) {
+				const parts: string[] = [];
+				
+				if (awsError.name) {
+					parts.push(awsError.name);
+				}
+				
+				if (awsError.message) {
+					parts.push(awsError.message);
+				}
+				
+				if (awsError.$metadata.httpStatusCode) {
+					parts.push(`(HTTP ${awsError.$metadata.httpStatusCode})`);
+				}
+				
+				if (parts.length > 0) {
+					return parts.join(': ');
+				}
+			}
+			
+			// Generic Error object
+			if (err instanceof Error) {
+				return err.message || err.name || "Error without message";
+			}
+			
+			// Object with message property
+			if ('message' in err && typeof err.message === 'string') {
+				return err.message;
+			}
+		}
+
+		// Fallback to string conversion
+		try {
+			const str = String(err);
+			return str !== '[object Object]' ? str : "Unknown error (object without message)";
+		} catch {
+			return "Unknown error (cannot convert to string)";
+		}
 	}
 }
