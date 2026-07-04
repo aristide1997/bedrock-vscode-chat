@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { BedrockChatProvider } from "../providers/bedrock-chat.provider";
 import { ConfigurationService } from "../services/configuration.service";
 import { AuthenticationService } from "../services/authentication.service";
-import { convertMessages } from "../converters/messages";
+import { convertMessages, detectImageFormat } from "../converters/messages";
 import { convertTools } from "../converters/tools";
 import { validateRequest, validateTools } from "../validation";
 import { tryParseJSONObject } from "../converters/schema";
@@ -151,6 +151,55 @@ suite("Bedrock Chat Provider Extension", () => {
 			assert.equal(result.messages.length, 1);
 			assert.equal(result.messages[0].role, "assistant");
 			assert.ok(result.messages[0].content.length > 0);
+		});
+
+		test("uses magic-byte format when mimeType is wrong (PNG reported as jpeg)", () => {
+			const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D]);
+			const msg = {
+				role: vscode.LanguageModelChatMessageRole.User,
+				content: [{ mimeType: "image/jpeg", data: png }],
+				name: undefined,
+			} as unknown as vscode.LanguageModelChatMessage;
+			const result = convertMessages([msg], 'anthropic.claude-3-5-sonnet-20241022-v2:0');
+			const imageBlock = result.messages[0].content.find(c => "image" in c);
+			assert.ok(imageBlock && "image" in imageBlock, "expected an image content block");
+			assert.equal((imageBlock as { image: { format: string } }).image.format, "png");
+		});
+	});
+
+	suite("converters/detectImageFormat", () => {
+		const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D]);
+		const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01]);
+		const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00]);
+		const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+
+		test("PNG bytes override a wrong jpeg mimeType", () => {
+			assert.equal(detectImageFormat(png, "image/jpeg"), "png");
+		});
+
+		test("detects JPEG, GIF and WebP from magic bytes", () => {
+			assert.equal(detectImageFormat(jpeg, "image/png"), "jpeg");
+			assert.equal(detectImageFormat(gif, "application/octet-stream"), "gif");
+			assert.equal(detectImageFormat(webp, "image/png"), "webp");
+		});
+
+		test("falls back to mimeType when bytes are unrecognizable", () => {
+			const junk = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B]);
+			assert.equal(detectImageFormat(junk, "image/png"), "png");
+		});
+
+		test("normalizes jpg to jpeg on the mimeType fallback path", () => {
+			const junk = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B]);
+			assert.equal(detectImageFormat(junk, "image/jpg"), "jpeg");
+		});
+
+		test("falls back to mimeType for undefined or short buffers", () => {
+			assert.equal(detectImageFormat(undefined, "image/gif"), "gif");
+			assert.equal(detectImageFormat(png.slice(0, 4), "image/webp"), "webp");
+		});
+
+		test("returns null when nothing is determinable", () => {
+			assert.equal(detectImageFormat(undefined, ""), null);
 		});
 	});
 
