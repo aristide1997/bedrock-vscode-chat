@@ -60,27 +60,7 @@ export class StreamProcessor {
 		} catch (err) {
 			// Suppress errors when cancellation was requested, since it is expected in that case.
 			if (!token.isCancellationRequested) {
-				// Ensure error has a message to prevent "unknown" errors in ToolCallingLoop
-				if (err instanceof Error) {
-					logger.error("[StreamProcessor] Stream processing failed", {
-						name: err.name,
-						message: err.message,
-						stack: err.stack,
-					});
-					throw err;
-				}
-				
-				// Handle non-Error objects
-				const errorMessage = typeof err === 'object' && err !== null && 'message' in err
-					? String((err as any).message)
-					: String(err);
-				
-				logger.error("[StreamProcessor] Stream processing failed with non-Error", {
-					error: errorMessage,
-					type: typeof err,
-				});
-				
-				throw new Error(`Stream processing failed: ${errorMessage || 'unknown error'}`);
+				throw err;
 			}
 			logger.log("[StreamProcessor] Stream error suppressed due to cancellation", err);
 		} finally {
