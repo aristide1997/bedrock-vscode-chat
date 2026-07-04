@@ -411,4 +411,95 @@ suite("Bedrock Integration", () => {
 
 		console.log("  ✓ Tool calling integration test PASSED");
 	});
+
+	test("Vision: image with a wrong mimeType is accepted (magic-byte detection)", async function () {
+		// Regression guard for PR #20. VS Code's browser attachment can report an
+		// incorrect mimeType — e.g. image/jpeg for data that is actually PNG. Before the
+		// fix, convertMessages trusted the mimeType and sent format:"jpeg" with PNG bytes,
+		// which Bedrock rejects: "The image was specified using the image/jpeg media type,
+		// but the image appears to be a image/png image". detectImageFormat now derives the
+		// real format from the magic bytes, so the request is accepted.
+		const apiKey = loadApiKeyFromEnv();
+		if (!apiKey) {
+			console.log("⚠️  Skipping integration test - set AWS_BEARER_TOKEN_BEDROCK to run");
+			this.skip();
+			return;
+		}
+
+		this.timeout(30000);
+
+		const originalGetConfiguration = vscode.workspace.getConfiguration;
+		(vscode.workspace as any).getConfiguration = (section?: string) => {
+			if (section === 'languageModelChatProvider.bedrock') {
+				return {
+					get: (key: string) => {
+						if (key === 'region') return 'eu-central-1';
+						if (key === 'authMethod') return 'api-key';
+						if (key === 'apiKey') return apiKey;
+						return undefined;
+					},
+					has: () => true,
+					inspect: () => undefined,
+					update: async () => {}
+				};
+			}
+			return originalGetConfiguration(section);
+		};
+
+		const configService = new ConfigurationService();
+		const authService = new AuthenticationService(configService);
+		const provider = new BedrockChatProvider(configService, authService);
+
+		console.log("  → Fetching models...");
+		const models = await provider.prepareLanguageModelChatInformation(
+			{ silent: true },
+			new vscode.CancellationTokenSource().token
+		);
+
+		const claude = models.find((m) => m.name.includes("Claude Haiku 4.5"));
+		assert.ok(claude, "Should have Claude Haiku 4.5 (vision-capable) available");
+		console.log(`  ✓ Using model: ${claude.name}`);
+
+		// A valid 1x1 PNG. The bytes begin with the PNG signature (89 50 4E 47 ...),
+		// but we deliberately attach it with mimeType image/jpeg to reproduce the bug.
+		const PNG_1x1_BASE64 =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+		const pngBytes = new Uint8Array(Buffer.from(PNG_1x1_BASE64, "base64"));
+		assert.equal(pngBytes[0], 0x89, "fixture must actually be PNG data");
+
+		const messages = [
+			{
+				role: vscode.LanguageModelChatMessageRole.User,
+				content: [
+					new vscode.LanguageModelTextPart("Reply with exactly: IMAGE_OK"),
+					{ mimeType: "image/jpeg", data: pngBytes },
+				],
+				name: undefined,
+			},
+		] as unknown as vscode.LanguageModelChatMessage[];
+
+		let receivedText = "";
+		let chunkCount = 0;
+
+		console.log("  → Sending PNG bytes declared as image/jpeg...");
+		await provider.provideLanguageModelChatResponse(
+			claude,
+			messages,
+			{} as vscode.LanguageModelChatRequestHandleOptions,
+			{
+				report: (part) => {
+					if (part instanceof vscode.LanguageModelTextPart) {
+						receivedText += part.value;
+						chunkCount++;
+					}
+				},
+			},
+			new vscode.CancellationTokenSource().token
+		);
+
+		assert.ok(chunkCount > 0, "Should receive streaming chunks (no ValidationException)");
+		assert.ok(receivedText.length > 0, "Should receive response text");
+		console.log(`  ✓ Received ${chunkCount} chunks: "${receivedText.trim()}"`);
+		console.log("  ✓ Mislabeled image accepted — PR #20 fix verified");
+	});
 });
