@@ -33,6 +33,37 @@ function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }): string
 	return text;
 }
 
+/**
+ * Resolve an image's format, preferring the actual bytes over the reported mimeType.
+ * VS Code's browser attachment can report an incorrect mimeType (e.g. image/jpeg for
+ * PNG data), which Bedrock rejects with a ValidationException. When the leading magic
+ * bytes identify a known format we trust them; otherwise we fall back to the mimeType
+ * subtype (normalizing jpg -> jpeg). Returns null when nothing determinable.
+ */
+export function detectImageFormat(bytes: Uint8Array | undefined, mimeType: string): string | null {
+	if (bytes instanceof Uint8Array && bytes.length >= 12) {
+		if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+			return 'png';
+		}
+		if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+			return 'jpeg';
+		}
+		if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+			return 'gif';
+		}
+		if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+			bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+			return 'webp';
+		}
+	}
+
+	const subtype = mimeType.split('/')[1]?.toLowerCase();
+	if (!subtype) {
+		return null;
+	}
+	return subtype === 'jpg' ? 'jpeg' : subtype;
+}
+
 export function convertMessages(
 	messages: readonly vscode.LanguageModelChatRequestMessage[],
 	modelId: string
@@ -64,41 +95,7 @@ export function convertMessages(
 			} else if (typeof part === 'object' && part !== null && 'mimeType' in part && 'data' in part) {
 				const dataPart = part as { mimeType: string; data: Uint8Array };
 				if (dataPart.mimeType.startsWith('image/')) {
-					// Detect actual image format from magic bytes to handle cases where
-					// the reported mimeType doesn't match the actual image data
-					let actualFormat: string | null = null;
-					const bytes = dataPart.data;
-					
-					if (bytes instanceof Uint8Array && bytes.length >= 12) {
-						// PNG: 89 50 4E 47
-						if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
-							actualFormat = 'png';
-						}
-						// JPEG: FF D8 FF
-						else if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-							actualFormat = 'jpeg';
-						}
-						// GIF: 47 49 46 38
-						else if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
-							actualFormat = 'gif';
-						}
-						// WebP: RIFF ... WEBP
-						else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
-								 bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
-							actualFormat = 'webp';
-						}
-					}
-					
-					// Fall back to mimeType if detection fails
-					if (!actualFormat) {
-						const mimeTypeParts = dataPart.mimeType.split('/');
-						actualFormat = mimeTypeParts[1]?.toLowerCase();
-						// Normalize jpg to jpeg
-						if (actualFormat === 'jpg') {
-							actualFormat = 'jpeg';
-						}
-					}
-					
+					const actualFormat = detectImageFormat(dataPart.data, dataPart.mimeType);
 					logger.log(`[Message Converter] Image detected - mimeType: ${dataPart.mimeType}, actual format: ${actualFormat}`);
 
 					if (actualFormat === 'png' || actualFormat === 'jpeg' || actualFormat === 'gif' || actualFormat === 'webp') {
