@@ -11,6 +11,46 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_CONTEXT_LENGTH = 200000;
 
 /**
+ * The broad geographic inference-profile prefix for a source region
+ * (`us.`, `eu.`, `apac.`). AWS groups every ap-* region under the `apac.` geo.
+ */
+export function regionGeoPrefix(region: string): string {
+	return region.startsWith("ap-") ? "apac." : `${region.split("-")[0]}.`;
+}
+
+/**
+ * Resolve the target to invoke for a bare model ID.
+ * Order: user override → the region's own geo pool → any other in-region pool →
+ * the worldwide `global.` pool → bare ID (undefined).
+ *
+ * Preferring any in-region pool over `global.` keeps single-country data-residency
+ * pools (e.g. Australia's `au.`, Japan's `jp.`) from being silently widened to all
+ * commercial Regions — without hard-coding which countries those happen to be.
+ * availableProfileIds is already scoped by AWS to profiles callable from this region.
+ *
+ * Pure (no I/O) so the routing table is unit-testable without a live Bedrock call.
+ */
+export function resolveInvocationTarget(
+	modelId: string,
+	availableProfileIds: Set<string>,
+	region: string,
+	overrides: Record<string, string>
+): string | undefined {
+	const override = overrides[modelId];
+	if (override) {
+		return override;
+	}
+	const candidates = [...availableProfileIds].filter((pid) => pid.endsWith(`.${modelId}`));
+	const geo = regionGeoPrefix(region);
+	return (
+		candidates.find((pid) => pid.startsWith(geo)) ??
+		candidates.find((pid) => !pid.startsWith("global.")) ??
+		candidates.find((pid) => pid.startsWith("global.")) ??
+		candidates[0]
+	);
+}
+
+/**
  * Manages model information, capabilities, and metadata.
  * Coordinates between AWS Bedrock and OpenRouter data sources.
  */
@@ -76,7 +116,6 @@ export class ModelService {
 		}
 
 		const infos: LanguageModelChatInformation[] = [];
-		const regionGeo = region.startsWith("ap-") ? "apac" : region.split("-")[0];
 		const overrides = this.configService.getInferenceProfileOverrides();
 		this.invocationTargets.clear();
 
@@ -85,20 +124,9 @@ export class ModelService {
 				continue;
 			}
 
-			// Resolution order: user override → system inference profile → bare ID
-			const overrideTarget = overrides[m.modelId];
-			if (overrideTarget) {
-				this.invocationTargets.set(m.modelId, overrideTarget);
-			} else {
-				const candidates = [...availableProfileIds].filter((pid) => pid.endsWith(`.${m.modelId}`));
-				const matchingProfileId =
-					candidates.find((pid) => pid.startsWith(`${regionGeo}.`)) ??
-					candidates.find((pid) => pid.startsWith("au.")) ??
-					candidates.find((pid) => pid.startsWith("global.")) ??
-					candidates[0];
-				if (matchingProfileId) {
-					this.invocationTargets.set(m.modelId, matchingProfileId);
-				}
+			const invocationTarget = resolveInvocationTarget(m.modelId, availableProfileIds, region, overrides);
+			if (invocationTarget) {
+				this.invocationTargets.set(m.modelId, invocationTarget);
 			}
 
 			const hasInferenceProfile = this.invocationTargets.has(m.modelId);
