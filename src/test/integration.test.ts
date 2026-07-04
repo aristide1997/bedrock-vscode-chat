@@ -5,28 +5,33 @@ import * as fs from "fs";
 import { BedrockChatProvider } from "../providers/bedrock-chat.provider";
 import { ConfigurationService } from "../services/configuration.service";
 import { AuthenticationService } from "../services/authentication.service";
+import { ModelService } from "../services/model.service";
 
 /**
- * Load API key from .env file
+ * Read a single KEY=value entry from the repo-root .env file (undefined if absent).
  */
-function loadApiKeyFromEnv(): string | undefined {
+function loadEnvVar(key: string): string | undefined {
 	const envPath = path.resolve(__dirname, "../../.env");
 	if (!fs.existsSync(envPath)) {
 		return undefined;
 	}
-
-	const envContent = fs.readFileSync(envPath, 'utf-8');
-	const lines = envContent.split('\n');
-	for (const line of lines) {
+	for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
 		const trimmed = line.trim();
 		if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
-			const [key, ...valueParts] = trimmed.split('=');
-			if (key.trim() === 'AWS_BEARER_TOKEN_BEDROCK' && valueParts.length > 0) {
+			const [k, ...valueParts] = trimmed.split('=');
+			if (k.trim() === key && valueParts.length > 0) {
 				return valueParts.join('=').trim();
 			}
 		}
 	}
 	return undefined;
+}
+
+/**
+ * Load API key from .env file
+ */
+function loadApiKeyFromEnv(): string | undefined {
+	return loadEnvVar('AWS_BEARER_TOKEN_BEDROCK');
 }
 
 /**
@@ -410,5 +415,90 @@ suite("Bedrock Integration", () => {
 		);
 
 		console.log("  ✓ Tool calling integration test PASSED");
+	});
+
+	// Optional: exercises a *user-supplied application inference profile override* end to end.
+	// Skipped unless BEDROCK_TEST_INFERENCE_PROFILE_ARN (+ _MODEL_ID) are set in .env, so it
+	// never fails for contributors who don't have a profile provisioned. Provision one with
+	// scripts in scratchpad (create_profile.py) and paste the emitted lines into .env.
+	test("Override: invocation routes through a real application inference profile ARN", async function () {
+		const apiKey = loadApiKeyFromEnv();
+		const overrideArn = loadEnvVar('BEDROCK_TEST_INFERENCE_PROFILE_ARN');
+		const overrideModelId = loadEnvVar('BEDROCK_TEST_INFERENCE_PROFILE_MODEL_ID');
+		if (!apiKey || !overrideArn || !overrideModelId) {
+			console.log("⚠️  Skipping override e2e - set BEDROCK_TEST_INFERENCE_PROFILE_ARN and BEDROCK_TEST_INFERENCE_PROFILE_MODEL_ID in .env to run");
+			this.skip();
+			return;
+		}
+
+		this.timeout(30000);
+
+		// Region is authoritative from the ARN: arn:aws:bedrock:<region>:<acct>:application-inference-profile/...
+		const region = overrideArn.split(":")[3];
+
+		const originalGetConfiguration = vscode.workspace.getConfiguration;
+		(vscode.workspace as any).getConfiguration = (section?: string) => {
+			if (section === 'languageModelChatProvider.bedrock') {
+				return {
+					get: (key: string) => {
+						if (key === 'region') return region;
+						if (key === 'authMethod') return 'api-key';
+						if (key === 'apiKey') return apiKey;
+						if (key === 'inferenceProfileOverrides') return { [overrideModelId]: overrideArn };
+						return undefined;
+					},
+					has: () => true,
+					inspect: () => undefined,
+					update: async () => {}
+				};
+			}
+			return originalGetConfiguration(section);
+		};
+
+		const configService = new ConfigurationService();
+		const authService = new AuthenticationService(configService);
+
+		// (a) Resolution: the model stays listed under its BARE id, and the override ARN is
+		//     what gets selected as the invocation target (not a system profile or bare id).
+		console.log("  → Fetching models with override configured...");
+		const modelService = new ModelService(authService, configService);
+		const models = await modelService.getLanguageModelChatInformation(true);
+		const listed = models.find((m) => m.id === overrideModelId);
+		assert.ok(listed, `override model ${overrideModelId} should be listed under its bare id`);
+		assert.equal(
+			modelService.getInvocationTarget(overrideModelId),
+			overrideArn,
+			"resolution must select the user override ARN"
+		);
+		console.log(`  ✓ override resolved: ${overrideModelId} -> ${overrideArn}`);
+
+		// (b) Invocation: driving the provider (list -> respond) streams a real response,
+		//     proving the override ARN is a live-valid ConverseStream target through the
+		//     full handler path (requestInput.modelId substituted to the ARN).
+		const provider = new BedrockChatProvider(configService, authService);
+		const providerModels = await provider.prepareLanguageModelChatInformation(
+			{ silent: true },
+			new vscode.CancellationTokenSource().token
+		);
+		const model = providerModels.find((m) => m.id === overrideModelId);
+		assert.ok(model, "override model should be available via the provider");
+
+		console.log("  → Invoking through the override ARN...");
+		let receivedText = "";
+		await provider.provideLanguageModelChatResponse(
+			model!,
+			[{
+				role: vscode.LanguageModelChatMessageRole.User,
+				content: [new vscode.LanguageModelTextPart("Reply with exactly: OVERRIDE_OK")],
+				name: undefined,
+			}],
+			{} as vscode.LanguageModelChatRequestHandleOptions,
+			{ report: (part) => { if (part instanceof vscode.LanguageModelTextPart) receivedText += part.value; } },
+			new vscode.CancellationTokenSource().token
+		);
+
+		assert.ok(receivedText.trim().length > 0, "should stream a response via the override ARN");
+		console.log(`  ✓ streamed via override ARN: "${receivedText.trim()}"`);
+		console.log("  ✓ Override integration test PASSED");
 	});
 });
