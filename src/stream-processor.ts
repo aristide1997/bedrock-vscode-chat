@@ -14,15 +14,8 @@ export interface CapturedReasoning {
 
 export class StreamProcessor {
 	private toolBuffer: ToolCallBufferManager;
-	/** Whether a thinking part was successfully emitted to the UI this turn. */
-	private emittedThinking = false;
 	/** Reasoning accumulated this turn (for capture / multi-turn replay). */
 	private capturedReasoning: CapturedReasoning = { text: "" };
-	/**
-	 * Cached proposed-API constructor: a function when available, `null` when
-	 * confirmed unavailable/rejected, `undefined` before the first probe.
-	 */
-	private thinkingPartCtor: any = undefined;
 
 	constructor() {
 		this.toolBuffer = new ToolCallBufferManager();
@@ -33,64 +26,12 @@ export class StreamProcessor {
 		return this.capturedReasoning.text.length > 0 ? this.capturedReasoning : undefined;
 	}
 
-	/**
-	 * Emit a reasoning delta to the chat UI.
-	 *
-	 * `LanguageModelThinkingPart` is a proposed API that may not exist at runtime
-	 * (it is absent from the stable vscode.d.ts). We probe it dynamically and wrap
-	 * progress.report in try/catch because the host can also reject the part when
-	 * the proposal isn't enabled. Falls back to plain text so reasoning stays visible.
-	 */
-	private emitReasoning(
-		text: string,
-		progress: vscode.Progress<vscode.LanguageModelResponsePart>
-	): void {
-		// Resolve the proposed LanguageModelThinkingPart constructor once. It is
-		// absent from the stable vscode.d.ts but available at runtime for providers
-		// registered via `languageModelChatProviders`. Caching avoids per-delta
-		// probing that could introduce micro-buffering during live streaming.
-		if (this.thinkingPartCtor === undefined) {
-			const ctor = (vscode as any).LanguageModelThinkingPart;
-			this.thinkingPartCtor = typeof ctor === "function" ? ctor : null;
-			if (this.thinkingPartCtor === null) {
-				logger.debug("[StreamProcessor] LanguageModelThinkingPart not available at runtime; falling back to text");
-			}
-		}
-
-		if (this.thinkingPartCtor) {
-			try {
-				// Emit each delta as its own thinking part WITHOUT an id so the
-				// workbench merges consecutive parts into the single active thinking
-				// block and renders them incrementally (live streaming). The id is
-				// attached only when the block finalizes (see finalizeReasoning).
-				progress.report(new this.thinkingPartCtor(text));
-				this.emittedThinking = true;
-				return;
-			} catch (error: unknown) {
-				const isApiMissing =
-					error instanceof TypeError ||
-					error instanceof ReferenceError ||
-					String(error).includes("LanguageModelThinkingPart");
-				if (!isApiMissing) {
-					throw error;
-				}
-				// Host rejected the proposed part — disable for the rest of the stream.
-				this.thinkingPartCtor = null;
-				logger.debug("[StreamProcessor] LanguageModelThinkingPart rejected by host; falling back to text");
-			}
-		}
-
-		// Fallback: render reasoning as plain text so it remains visible.
-		progress.report(new vscode.LanguageModelTextPart(text));
-	}
-
 	async processStream(
 		stream: AsyncIterable<any>,
 		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
 		token: vscode.CancellationToken
 	): Promise<void> {
 		this.toolBuffer.reset();
-		this.emittedThinking = false;
 		this.capturedReasoning = { text: "" };
 
 		try {
@@ -144,15 +85,18 @@ export class StreamProcessor {
 			const delta = event.contentBlockDelta.delta;
 
 			// Reasoning / extended thinking deltas (Anthropic on Bedrock).
-			// Stream these BEFORE answer text so the UI shows thinking first, and
-			// capture them BEFORE any tool call so interleaved thinking round-trips.
+			// We capture reasoning (text + signature) but do NOT emit it to the
+			// chat UI: the only dedicated reasoning surface, LanguageModelThinkingPart,
+			// is a proposed API, and enabling API proposals blocks Marketplace
+			// publishing. Capture must still happen BEFORE any tool call so the
+			// signed thinking block round-trips on multi-turn tool use (Anthropic
+			// rejects the follow-up request otherwise).
 			const reasoning = delta?.reasoningContent;
 			if (reasoning) {
 				const reasoningText =
 					typeof reasoning.text === "string" ? reasoning.text : undefined;
 				if (reasoningText) {
 					this.capturedReasoning.text += reasoningText;
-					this.emitReasoning(reasoningText, progress);
 				}
 				// The signature arrives on its own delta and must be retained
 				// for multi-turn replay of the signed thinking block.

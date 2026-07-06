@@ -137,7 +137,10 @@ export class ModelService {
 			const maxInput = properties?.contextLength ?? DEFAULT_CONTEXT_LENGTH;
 			const maxOutput = properties?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 			const vision = m.inputModalities.includes("IMAGE");
-			const profile = getModelProfile(modelIdToUse);
+			// Capability detection uses the bare model ID: under inference-profile
+			// routing the invocation target may be an ARN/profile ID, but the public
+			// model ID stays bare so getModelProfile still resolves the profile.
+			const profile = getModelProfile(m.modelId);
 
 			const modelInfo: LanguageModelChatInformation = {
 				id: m.modelId,
