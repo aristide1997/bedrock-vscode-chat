@@ -117,6 +117,15 @@
 					"description": "Explicit thinking token budget override for LEGACY fixed-budget models only (Claude 3.7 / 4.0). Leave null to derive the budget from the effort level. Ignored by newer adaptive-effort models.",
 					"default": null,
 					"title": "Thinking Budget Tokens"
+				},
+				"languageModelChatProvider.bedrock.inferenceProfileOverrides": {
+					"type": "object",
+					"description": "Map of model IDs to inference profile ARNs or IDs. Use this to route specific models through application inference profiles. Example: { \"anthropic.claude-sonnet-4-6\": \"arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/abc123\" }",
+					"title": "Inference Profile Overrides",
+					"default": {},
+					"additionalProperties": {
+						"type": "string"
+					}
 				}
 			}
 		},

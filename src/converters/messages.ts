@@ -148,6 +148,37 @@ function injectExtendedThinking(
 	});
 }
 
+/**
+ * Resolve an image's format, preferring the actual bytes over the reported mimeType.
+ * VS Code's browser attachment can report an incorrect mimeType (e.g. image/jpeg for
+ * PNG data), which Bedrock rejects with a ValidationException. When the leading magic
+ * bytes identify a known format we trust them; otherwise we fall back to the mimeType
+ * subtype (normalizing jpg -> jpeg). Returns null when nothing determinable.
+ */
+export function detectImageFormat(bytes: Uint8Array | undefined, mimeType: string): string | null {
+	if (bytes instanceof Uint8Array && bytes.length >= 12) {
+		if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+			return 'png';
+		}
+		if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+			return 'jpeg';
+		}
+		if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+			return 'gif';
+		}
+		if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+			bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+			return 'webp';
+		}
+	}
+
+	const subtype = mimeType.split('/')[1]?.toLowerCase();
+	if (!subtype) {
+		return null;
+	}
+	return subtype === 'jpg' ? 'jpeg' : subtype;
+}
+
 export function convertMessages(
 	messages: readonly vscode.LanguageModelChatRequestMessage[],
 	modelId: string,
@@ -180,21 +211,21 @@ export function convertMessages(
 			} else if (typeof part === 'object' && part !== null && 'mimeType' in part && 'data' in part) {
 				const dataPart = part as { mimeType: string; data: Uint8Array };
 				if (dataPart.mimeType.startsWith('image/')) {
-					const mimeTypeParts = dataPart.mimeType.split('/');
-					const format = mimeTypeParts[1]?.toLowerCase();
+					const actualFormat = detectImageFormat(dataPart.data, dataPart.mimeType);
+					logger.log(`[Message Converter] Image detected - mimeType: ${dataPart.mimeType}, actual format: ${actualFormat}`);
 
-					if (format === 'png' || format === 'jpeg' || format === 'gif' || format === 'webp') {
+					if (actualFormat === 'png' || actualFormat === 'jpeg' || actualFormat === 'gif' || actualFormat === 'webp') {
 						imageBlocks.push({
 							image: {
-								format: format as "png" | "jpeg" | "gif" | "webp",
+								format: actualFormat as "png" | "jpeg" | "gif" | "webp",
 								source: {
 									bytes: dataPart.data,
 								},
 							},
 						});
-						logger.log(`[Message Converter] Added image block with format: ${format}`);
+						logger.log(`[Message Converter] Added image block with format: ${actualFormat}`);
 					} else {
-						logger.warn(`[Message Converter] Unsupported image format: ${format}`);
+						logger.warn(`[Message Converter] Unsupported image format: ${actualFormat}`);
 					}
 				}
 			} else if (part instanceof vscode.LanguageModelToolCallPart) {

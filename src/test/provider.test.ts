@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { BedrockChatProvider } from "../providers/bedrock-chat.provider";
 import { ConfigurationService } from "../services/configuration.service";
 import { AuthenticationService } from "../services/authentication.service";
-import { convertMessages } from "../converters/messages";
+import { convertMessages, detectImageFormat } from "../converters/messages";
 import { convertTools } from "../converters/tools";
 import { validateRequest, validateTools } from "../validation";
 import { tryParseJSONObject } from "../converters/schema";
@@ -12,6 +12,7 @@ import { getProxyAgent } from "../clients/bedrock.client";
 import { getModelProfile } from "../profiles";
 import { buildRequestInput } from "../converters/request";
 import { StreamProcessor } from "../stream-processor";
+import { resolveInvocationTarget, regionGeoPrefix } from "../services/model.service";
 
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
@@ -150,6 +151,55 @@ suite("Bedrock Chat Provider Extension", () => {
 			assert.equal(result.messages.length, 1);
 			assert.equal(result.messages[0].role, "assistant");
 			assert.ok(result.messages[0].content.length > 0);
+		});
+
+		test("uses magic-byte format when mimeType is wrong (PNG reported as jpeg)", () => {
+			const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D]);
+			const msg = {
+				role: vscode.LanguageModelChatMessageRole.User,
+				content: [{ mimeType: "image/jpeg", data: png }],
+				name: undefined,
+			} as unknown as vscode.LanguageModelChatMessage;
+			const result = convertMessages([msg], 'anthropic.claude-3-5-sonnet-20241022-v2:0');
+			const imageBlock = result.messages[0].content.find(c => "image" in c);
+			assert.ok(imageBlock && "image" in imageBlock, "expected an image content block");
+			assert.equal((imageBlock as { image: { format: string } }).image.format, "png");
+		});
+	});
+
+	suite("converters/detectImageFormat", () => {
+		const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D]);
+		const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01]);
+		const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00]);
+		const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+
+		test("PNG bytes override a wrong jpeg mimeType", () => {
+			assert.equal(detectImageFormat(png, "image/jpeg"), "png");
+		});
+
+		test("detects JPEG, GIF and WebP from magic bytes", () => {
+			assert.equal(detectImageFormat(jpeg, "image/png"), "jpeg");
+			assert.equal(detectImageFormat(gif, "application/octet-stream"), "gif");
+			assert.equal(detectImageFormat(webp, "image/png"), "webp");
+		});
+
+		test("falls back to mimeType when bytes are unrecognizable", () => {
+			const junk = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B]);
+			assert.equal(detectImageFormat(junk, "image/png"), "png");
+		});
+
+		test("normalizes jpg to jpeg on the mimeType fallback path", () => {
+			const junk = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B]);
+			assert.equal(detectImageFormat(junk, "image/jpg"), "jpeg");
+		});
+
+		test("falls back to mimeType for undefined or short buffers", () => {
+			assert.equal(detectImageFormat(undefined, "image/gif"), "gif");
+			assert.equal(detectImageFormat(png.slice(0, 4), "image/webp"), "webp");
+		});
+
+		test("returns null when nothing is determinable", () => {
+			assert.equal(detectImageFormat(undefined, ""), null);
 		});
 	});
 
@@ -574,6 +624,107 @@ suite("Bedrock Chat Provider Extension", () => {
 				convertTools({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [tool, { ...tool, name: "do_y" }] } as vscode.LanguageModelChatRequestHandleOptions, "anthropic.claude-3-5-sonnet-20241022-v2:0"),
 				/more than one tool/,
 			);
+		});
+	});
+
+	suite("inference profile resolution", () => {
+		// The routing table every invocation flows through: bare model ID -> the actual
+		// target (user override, geo system profile, or bare). Covers the happy paths and
+		// the failure/edge paths so a change here can't silently misroute or leak geography.
+		const MID = "anthropic.claude-haiku-4-5-20251001-v1:0";
+		const prof = (prefix: string) => `${prefix}.${MID}`;
+		const set = (...ids: string[]) => new Set(ids);
+		const NO_OVERRIDES: Record<string, string> = {};
+
+		test("regionGeoPrefix maps a region to its broad geo pool", () => {
+			assert.equal(regionGeoPrefix("us-east-1"), "us.");
+			assert.equal(regionGeoPrefix("eu-west-1"), "eu.");
+			assert.equal(regionGeoPrefix("ap-south-1"), "apac.");
+			// every ap-* region rolls up to the apac. geo (au./jp. are handled generically below)
+			assert.equal(regionGeoPrefix("ap-southeast-2"), "apac.");
+			assert.equal(regionGeoPrefix("ap-northeast-1"), "apac.");
+		});
+
+		// --- happy paths ---
+		test("user override wins over every system profile", () => {
+			const arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123";
+			const target = resolveInvocationTarget(MID, set(prof("us"), prof("global")), "us-east-1", { [MID]: arn });
+			assert.equal(target, arn);
+		});
+
+		test("override applies even when no system profile exists for the region", () => {
+			const arn = "arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/def456";
+			assert.equal(resolveInvocationTarget(MID, set(), "ap-southeast-2", { [MID]: arn }), arn);
+		});
+
+		test("matches the region's own geo profile (us / eu / generic apac)", () => {
+			assert.equal(resolveInvocationTarget(MID, set(prof("us"), prof("eu")), "us-east-1", NO_OVERRIDES), prof("us"));
+			assert.equal(resolveInvocationTarget(MID, set(prof("us"), prof("eu")), "eu-west-1", NO_OVERRIDES), prof("eu"));
+			assert.equal(resolveInvocationTarget(MID, set(prof("apac"), prof("us")), "ap-south-1", NO_OVERRIDES), prof("apac"));
+		});
+
+		test("in-region residency pool (au.) is preferred over the worldwide global. pool", () => {
+			assert.equal(resolveInvocationTarget(MID, set(prof("au"), prof("global")), "ap-southeast-2", NO_OVERRIDES), prof("au"));
+		});
+
+		test("in-region residency pool (jp.) is preferred over global. — no country hard-coding needed", () => {
+			// The generic "any non-global in-region pool beats global." rule keeps a Japan
+			// caller in-country without the resolver ever naming Japan.
+			assert.equal(resolveInvocationTarget(MID, set(prof("jp"), prof("global")), "ap-northeast-1", NO_OVERRIDES), prof("jp"));
+		});
+
+		test("the region's own geo pool (apac.) wins over another in-region pool (throughput-first)", () => {
+			assert.equal(resolveInvocationTarget(MID, set(prof("apac"), prof("au")), "ap-southeast-2", NO_OVERRIDES), prof("apac"));
+		});
+
+		test("falls back to global. when no in-geo profile is present", () => {
+			assert.equal(resolveInvocationTarget(MID, set(prof("global")), "us-east-1", NO_OVERRIDES), prof("global"));
+		});
+
+		// --- unhappy / edge paths ---
+		test("catch-all: returns a callable profile when no preferred prefix matches", () => {
+			// e.g. a us-gov caller ("us." prefix won't match "us-gov.") whose only candidate
+			// is the gov profile — still routed through it rather than dropped.
+			const gov = `us-gov.${MID}`;
+			assert.equal(resolveInvocationTarget(MID, set(gov), "us-gov-east-1", NO_OVERRIDES), gov);
+		});
+
+		test("returns undefined (invoke bare) when no profile matches the model", () => {
+			const otherModel = `us.anthropic.claude-3-5-sonnet-20241022-v2:0`;
+			assert.equal(resolveInvocationTarget(MID, set(otherModel), "us-east-1", NO_OVERRIDES), undefined);
+		});
+
+		test("returns undefined when nothing is available at all", () => {
+			assert.equal(resolveInvocationTarget(MID, set(), "us-east-1", NO_OVERRIDES), undefined);
+		});
+
+		test("substring model IDs do not cross-match (endsWith on '.<id>')", () => {
+			// A profile for a *different* model must never be chosen for MID.
+			const decoy = `apac.anthropic.claude-haiku-4-5-20251001-v1:0-preview`;
+			assert.equal(resolveInvocationTarget(MID, set(decoy), "ap-south-1", NO_OVERRIDES), undefined);
+		});
+
+		test("keeping the bare model ID lets getModelProfile suppress temperature for Claude 4+", () => {
+			// The whole point of routing at the wire level: model.id stays bare, so capability
+			// detection sees "anthropic.claude-*-4*" and omits temperature (Bedrock rejects it).
+			assert.equal(getModelProfile(MID).supportsTemperature, false);
+		});
+	});
+
+	suite("configuration: inference profile overrides", () => {
+		let original: typeof vscode.workspace.getConfiguration;
+		setup(() => { original = vscode.workspace.getConfiguration; });
+		teardown(() => { (vscode.workspace as any).getConfiguration = original; });
+
+		test("defaults to an empty map when unset", () => {
+			(vscode.workspace as any).getConfiguration = () => ({ get: () => undefined });
+			assert.deepEqual(new ConfigurationService().getInferenceProfileOverrides(), {});
+		});
+
+		test("returns the configured map verbatim", () => {
+			const map = { "anthropic.claude-haiku-4-5-20251001-v1:0": "arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/abc123" };
+			(vscode.workspace as any).getConfiguration = () => ({ get: (k: string) => k === "inferenceProfileOverrides" ? map : undefined });
+			assert.deepEqual(new ConfigurationService().getInferenceProfileOverrides(), map);
 		});
 	});
 });

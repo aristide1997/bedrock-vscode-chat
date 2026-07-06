@@ -90,4 +90,14 @@ export class ConfigurationService {
 		const value = config.get<number | null>('thinking.budgetTokens');
 		return typeof value === 'number' && value > 0 ? value : undefined;
 	}
+
+	/**
+	 * Get user-provided inference profile overrides.
+	 * Maps bare model IDs (e.g. "anthropic.claude-sonnet-4-6") to
+	 * full inference profile ARNs or IDs to use at invocation time.
+	 */
+	getInferenceProfileOverrides(): Record<string, string> {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		return config.get<Record<string, string>>('inferenceProfileOverrides') ?? {};
+	}
 }
