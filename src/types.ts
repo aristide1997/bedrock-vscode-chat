@@ -30,7 +30,26 @@ export interface BedrockImageBlock {
 	};
 }
 
-export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock;
+/**
+ * Bedrock reasoning / extended-thinking content block. Must be replayed
+ * (unmodified, with its signature) on follow-up tool-use turns or the API
+ * rejects the request with a 400 for Anthropic models.
+ */
+export interface BedrockReasoningBlock {
+	reasoningContent: {
+		reasoningText: {
+			text: string;
+			signature?: string;
+		};
+	};
+}
+
+export type BedrockContentBlock =
+	| BedrockTextBlock
+	| BedrockImageBlock
+	| BedrockToolUseBlock
+	| BedrockToolResultBlock
+	| BedrockReasoningBlock;
 
 /**
  * Bedrock Converse API message structure.

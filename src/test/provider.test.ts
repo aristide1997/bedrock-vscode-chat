@@ -148,9 +148,14 @@ suite("Bedrock Chat Provider Extension", () => {
 				name: undefined,
 			};
 			const result = convertMessages([msg], 'anthropic.claude-3-5-sonnet-20241022-v2:0');
-			assert.equal(result.messages.length, 1);
+			// The assistant turn carries the tool call; reconcileToolBlocks then
+			// synthesizes a placeholder user tool-result for the unanswered call so
+			// the request stays well-formed for Bedrock (unanswered tool_use -> 400).
+			assert.equal(result.messages.length, 2);
 			assert.equal(result.messages[0].role, "assistant");
-			assert.ok(result.messages[0].content.length > 0);
+			assert.ok(result.messages[0].content.some((c: any) => "toolUse" in c), "assistant turn must carry the tool call");
+			assert.equal(result.messages[1].role, "user");
+			assert.ok(result.messages[1].content.some((c: any) => "toolResult" in c), "unanswered tool call must get a synthesized result");
 		});
 
 		test("uses magic-byte format when mimeType is wrong (PNG reported as jpeg)", () => {
@@ -299,23 +304,25 @@ suite("Bedrock Chat Provider Extension", () => {
 		test("provider-routing matrix: full profile per provider, incl. regional prefixes", () => {
 			// This is the routing table every model flows through. Each row asserts the
 			// complete profile so a change to one provider can't silently shift another.
-			const matrix: [string, { supportsToolChoice: boolean; toolResultFormat: 'text' | 'json'; supportsTemperature: boolean }][] = [
-				// anthropic: tool choice + text results; temperature only for pre-4.x
-				["anthropic.claude-3-5-sonnet-20241022-v2:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
-				["us.anthropic.claude-3-5-sonnet-20241022-v2:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
-				["anthropic.claude-sonnet-4-5-20250929-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: false }],
-				["eu.anthropic.claude-sonnet-4-5-20250929-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: false }],
+			const matrix: [string, { supportsToolChoice: boolean; toolResultFormat: 'text' | 'json'; supportsTemperature: boolean; supportsThinking: boolean; reasoningApi: 'effort' | 'budget' | 'none' }][] = [
+				// anthropic: tool choice + text results; temperature only for pre-4.x.
+				// Extended thinking is supported on Claude 4.x (3.7/4.0-4.5 use the
+				// fixed-budget reasoning API); pre-thinking models report reasoningApi 'none'.
+				["anthropic.claude-3-5-sonnet-20241022-v2:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["us.anthropic.claude-3-5-sonnet-20241022-v2:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["anthropic.claude-sonnet-4-5-20250929-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: false, supportsThinking: true, reasoningApi: 'budget' }],
+				["eu.anthropic.claude-sonnet-4-5-20250929-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: false, supportsThinking: true, reasoningApi: 'budget' }],
 				// mistral: NO tool choice + JSON tool-result format
-				["mistral.mistral-large-2407-v1:0", { supportsToolChoice: false, toolResultFormat: 'json', supportsTemperature: true }],
-				["us.mistral.pixtral-large-2502-v1:0", { supportsToolChoice: false, toolResultFormat: 'json', supportsTemperature: true }],
+				["mistral.mistral-large-2407-v1:0", { supportsToolChoice: false, toolResultFormat: 'json', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["us.mistral.pixtral-large-2502-v1:0", { supportsToolChoice: false, toolResultFormat: 'json', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
 				// amazon nova: tool choice + text; non-nova amazon falls back to default (no tool choice)
-				["amazon.nova-pro-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
-				["us.amazon.nova-lite-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
-				["amazon.titan-text-express-v1", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+				["amazon.nova-pro-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["us.amazon.nova-lite-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["amazon.titan-text-express-v1", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
 				// cohere / meta / ai21: default profile
-				["cohere.command-r-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
-				["meta.llama3-70b-instruct-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
-				["ai21.jamba-1-5-large-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+				["cohere.command-r-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["meta.llama3-70b-instruct-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
+				["ai21.jamba-1-5-large-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true, supportsThinking: false, reasoningApi: 'none' }],
 			];
 			for (const [id, expected] of matrix) {
 				assert.deepEqual(getModelProfile(id), expected, `profile mismatch for ${id}`);

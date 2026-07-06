@@ -64,33 +64,69 @@ export class ToolCallBufferManager {
 
 		// Early emission: emit as soon as JSON becomes valid
 		if (canParse.ok) {
-			const id = buf.id ?? `call_${Math.random().toString(36).slice(2, 10)}`;
-			const parameters = canParse.value;
+			this.emitToolCall(index, buf, canParse.value, progress);
+			return;
+		}
 
-			// Content-based deduplication
-			const canonical = JSON.stringify(parameters);
-			const key = `${buf.name}:${canonical}`;
+		// Forced finalization but JSON never became valid. This can happen with
+		// arbitrary tool/hook output. Rather than silently dropping the tool call
+		// (which can hang the agent loop) or crashing, emit it with best-effort
+		// arguments: empty object if there were no args, otherwise log and skip.
+		if (force) {
+			const trimmed = (buf.args || "").trim();
+			if (trimmed.length === 0) {
+				this.emitToolCall(index, buf, {}, progress);
+				return;
+			}
+			logger.error("[Tool Buffer] Invalid JSON for tool call; emitting with empty args", {
+				index,
+				snippet: trimmed.slice(0, 200),
+			});
+			this.emitToolCall(index, buf, {}, progress);
+		}
+	}
+
+	/**
+	 * Report a completed tool call to the chat UI. Never throws: a malformed or
+	 * non-serializable parameter object must not crash the stream.
+	 */
+	private emitToolCall(
+		index: number,
+		buf: ToolCallBuffer,
+		parameters: Record<string, unknown>,
+		progress: vscode.Progress<vscode.LanguageModelResponsePart>
+	): void {
+		try {
+			const id = buf.id ?? `call_${Math.random().toString(36).slice(2, 10)}`;
+			const name = buf.name ?? "";
+			if (!name) {
+				logger.error("[Tool Buffer] Cannot emit tool call without a name", { index });
+				return;
+			}
+
+			// Content-based deduplication (tolerant of non-serializable params).
+			let canonical: string;
+			try {
+				canonical = JSON.stringify(parameters);
+			} catch {
+				canonical = `${index}:${Math.random()}`;
+			}
+			const key = `${name}:${canonical}`;
 
 			if (this.emittedToolCallKeys.has(key)) {
-				logger.log("[Tool Buffer] Skipping duplicate tool call", { name: buf.name, key });
+				logger.log("[Tool Buffer] Skipping duplicate tool call", { name });
 				this.buffers.delete(index);
 				this.completedIndices.add(index);
 				return;
 			}
 
 			this.emittedToolCallKeys.add(key);
-			progress.report(new vscode.LanguageModelToolCallPart(id, buf.name, parameters));
+			progress.report(new vscode.LanguageModelToolCallPart(id, name, parameters ?? {}));
+		} catch (e) {
+			logger.error("[Tool Buffer] Failed to report tool call", e);
+		} finally {
 			this.buffers.delete(index);
 			this.completedIndices.add(index);
-			return;
-		}
-
-		// Only log error when forced and JSON is still invalid
-		if (force && !canParse.ok) {
-			logger.error("[Tool Buffer] Invalid JSON for tool call", {
-				index,
-				snippet: (buf.args || "").slice(0, 200),
-			});
 		}
 	}
 
