@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { AuthMethod } from "../types";
+import type { AuthMethod, ManualModel } from "../types";
 
 /**
  * Centralized configuration management for Bedrock extension.
@@ -72,5 +72,14 @@ export class ConfigurationService {
 	getInferenceProfileOverrides(): Record<string, string> {
 		const config = vscode.workspace.getConfiguration(this.configSection);
 		return config.get<Record<string, string>>('inferenceProfileOverrides') ?? {};
+	}
+	/**
+	 * Get manually-declared models. Used as a fallback when model listing is
+	 * unavailable (e.g. SCP denies bedrock:ListFoundationModels) or to pin an
+	 * explicit model set.
+	 */
+	getManualModels(): ManualModel[] {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		return config.get<ManualModel[]>('manualModels') ?? [];
 	}
 }

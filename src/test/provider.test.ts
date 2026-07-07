@@ -12,7 +12,7 @@ import { getProxyAgent } from "../clients/bedrock.client";
 import { getModelProfile } from "../profiles";
 import { buildRequestInput } from "../converters/request";
 import { StreamProcessor } from "../stream-processor";
-import { resolveInvocationTarget, regionGeoPrefix } from "../services/model.service";
+import { resolveInvocationTarget, regionGeoPrefix, manualModelToSummary } from "../services/model.service";
 
 suite("Bedrock Chat Provider Extension", () => {
 	suite("provider", () => {
@@ -708,6 +708,32 @@ suite("Bedrock Chat Provider Extension", () => {
 			// The whole point of routing at the wire level: model.id stays bare, so capability
 			// detection sees "anthropic.claude-*-4*" and omits temperature (Bedrock rejects it).
 			assert.equal(getModelProfile(MID).supportsTemperature, false);
+		});
+	});
+
+	suite("manual models (SCP fallback)", () => {
+		test("maps a minimal manual model into a streaming TEXT summary", () => {
+			const sum = manualModelToSummary({ id: "anthropic.claude-opus-4-8" });
+			assert.equal(sum.modelId, "anthropic.claude-opus-4-8");
+			assert.equal(sum.modelName, "anthropic.claude-opus-4-8");
+			assert.equal(sum.providerName, "anthropic");
+			assert.ok(sum.responseStreamingSupported, "must be streaming to survive the filter");
+			assert.ok(sum.outputModalities.includes("TEXT"), "must output TEXT to survive the filter");
+			assert.ok(!sum.inputModalities.includes("IMAGE"), "vision defaults off");
+		});
+
+		test("honors name and vision", () => {
+			const sum = manualModelToSummary({ id: "anthropic.claude-opus-4-8", name: "Opus 4.8", vision: true });
+			assert.equal(sum.modelName, "Opus 4.8");
+			assert.ok(sum.inputModalities.includes("IMAGE"));
+		});
+
+		test("a manual inferenceProfile routes like an override", () => {
+			// Even with NO discovered profiles, a manual model's inferenceProfile must
+			// be usable as an override so Converse targets the cross-region profile.
+			const id = "anthropic.claude-opus-4-8";
+			const profile = "global.anthropic.claude-opus-4-8";
+			assert.equal(resolveInvocationTarget(id, new Set(), "us-east-1", { [id]: profile }), profile);
 		});
 	});
 

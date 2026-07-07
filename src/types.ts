@@ -102,6 +102,31 @@ export interface ToolCallBuffer {
 }
 
 /**
+ * A manually-declared Bedrock model. Used when the environment blocks
+ * bedrock:ListFoundationModels / ListInferenceProfiles (e.g. a restrictive
+ * Service Control Policy) but still permits Converse/InvokeModel, or when a
+ * user simply wants to pin an explicit set of models.
+ */
+export interface ManualModel {
+	/** Bare model ID, e.g. "anthropic.claude-opus-4-8". */
+	id: string;
+	/** Display name shown in the picker. Defaults to `id`. */
+	name?: string;
+	/**
+	 * Inference profile ID or ARN to invoke instead of the bare ID
+	 * (e.g. "global.anthropic.claude-opus-4-8"). Most cross-region models
+	 * require this. Equivalent to an entry in `inferenceProfileOverrides`.
+	 */
+	inferenceProfile?: string;
+	/** Whether the model accepts image input. Defaults to false. */
+	vision?: boolean;
+	/** Optional context-window override (input tokens). */
+	maxInputTokens?: number;
+	/** Optional max output tokens. */
+	maxOutputTokens?: number;
+}
+
+/**
  * Authentication method for AWS Bedrock.
  */
 export type AuthMethod = 'api-key' | 'profile' | 'access-keys' | 'default';
