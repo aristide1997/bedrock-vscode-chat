@@ -263,17 +263,23 @@ suite("Bedrock Chat Provider Extension", () => {
 	});
 
 	suite("profiles", () => {
-		test("Claude 4.x models omit temperature (supportsTemperature === false)", () => {
+		test("Claude 4+ and unrecognized Anthropic IDs omit temperature (fail closed)", () => {
 			// Bedrock rejects the temperature inference parameter for Claude 4+ models.
-			const claude4Ids = [
+			const claude4PlusIds = [
 				"anthropic.claude-sonnet-4-5-20250929-v1:0",
 				"us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 				"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
 				"anthropic.claude-opus-4-7-20250805-v1:0",
 				"anthropic.claude-opus-4-20250514-v1:0",
 				"anthropic.claude-haiku-4-5-20251001-v1:0",
+				"anthropic.claude-sonnet-5",
+				"us.anthropic.claude-sonnet-5-20260101-v1:0",
+				"anthropic.claude-opus-5-20260101-v1:0",
+				"anthropic.claude-sonnet-10-20270101-v1:0",
+				"anthropic.claude-nova-7-20280101-v1:0",
+				"anthropic.claude-5-sonnet-20270101-v1:0",
 			];
-			for (const id of claude4Ids) {
+			for (const id of claude4PlusIds) {
 				assert.equal(getModelProfile(id).supportsTemperature, false, `expected supportsTemperature=false for ${id}`);
 			}
 		});
@@ -283,6 +289,9 @@ suite("Bedrock Chat Provider Extension", () => {
 				"anthropic.claude-3-5-sonnet-20241022-v2:0",
 				"us.anthropic.claude-3-5-sonnet-20241022-v2:0",
 				"anthropic.claude-3-haiku-20240307-v1:0",
+				"us.anthropic.claude-3-haiku-20240307-v1:0",
+				"anthropic.claude-instant-v1",
+				"anthropic.claude-v2:1",
 				"mistral.mistral-large-2407-v1:0",
 				"amazon.nova-pro-v1:0",
 			];
@@ -421,7 +430,7 @@ suite("Bedrock Chat Provider Extension", () => {
 		const baseConverted = { messages: [{ role: "user", content: [{ text: "hi" }] }], system: [] as unknown[] };
 		const model = { id: "anthropic.claude-3-5-sonnet-20241022-v2:0", maxOutputTokens: 4096 };
 
-		test("omits temperature for Claude 4.x, includes it for 3.x", () => {
+		test("omits temperature for Claude 4.x and 5, includes it for 3.x", () => {
 			const claude4 = buildRequestInput({
 				model: { id: "anthropic.claude-sonnet-4-5-20250929-v1:0", maxOutputTokens: 4096 },
 				converted: baseConverted,
@@ -430,6 +439,15 @@ suite("Bedrock Chat Provider Extension", () => {
 				toolConfig: undefined,
 			});
 			assert.equal(claude4.inferenceConfig!.temperature, undefined, "Claude 4.x must omit temperature");
+
+			const sonnet5 = buildRequestInput({
+				model: { id: "anthropic.claude-sonnet-5", maxOutputTokens: 4096 },
+				converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile("anthropic.claude-sonnet-5"),
+				toolConfig: undefined,
+			});
+			assert.equal(sonnet5.inferenceConfig!.temperature, undefined, "Claude Sonnet 5 must omit temperature");
 
 			const claude35 = buildRequestInput({
 				model,
