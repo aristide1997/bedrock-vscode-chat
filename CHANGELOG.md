@@ -4,6 +4,16 @@ All notable changes to the AWS Bedrock Provider for GitHub Copilot Chat extensio
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.0.6
+
+### Fixed
+
+- **Temperature sent to Claude 5+ models** (#21): Bedrock rejects the `temperature` inference parameter for Claude 4+ models, and version detection only matched literal Claude 4 IDs. Detection now parses the major version (#24, thanks @Josh-Karp) and fails closed: unrecognized Anthropic model IDs omit temperature instead of failing every request (#26).
+
+### Internal
+
+- Modular Playwright e2e harness (`e2e/lib/` + `e2e/stages/`) with a live Claude Sonnet 5 temperature-regression stage and Bedrock-only model-selection guarantees: provider-group row binding grounded in VS Code 1.122.1 source, per-stage log-delta stream proofs, and session-scoped verification (#26).
+
 ## 0.0.5
 
 ### Added
