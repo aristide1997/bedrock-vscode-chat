@@ -27,6 +27,31 @@ Pass `E2E_VSIX=/path/to.vsix` to skip the build and test a prebuilt artifact ins
 First run also downloads VS Code (~230 MB) into the `@vscode/test-electron` cache. No
 system VS Code install is required (any OS). Exit code: `0` = pass or skipped, `1` = failure.
 
+## Layout
+
+`run.mjs` is a thin orchestrator: it calls `setup()`, runs each stage in order, then
+`finalize()` verifies from the on-disk `Bedrock Chat` log. The behavior lives in modules:
+
+```
+run.mjs                # orchestrate: setup → stages → verify → exit
+lib/
+  config.mjs           # env resolution + shared constants
+  harness.mjs          # build/resolve VSIX, launch VS Code over CDP, find workbench, teardown
+  ui.mjs               # createUI(win): runCommand/pickRow/typePrompt/waitResponse/pickModel/…
+  verify.mjs           # readBedrockChatLog + Checks collector (PASS/FAIL/SKIP + exit code)
+stages/
+  01-auth.mjs          # configure API key + region via the extension UI
+  02-models.mjs        # Manage Language Models (list) + focus chat
+  03-select-model.mjs  # pick the primary Bedrock model (E2E_MODEL) and assert it's active
+  04-text.mjs          # text chat → BEDROCK_E2E_OK
+  05-tool.mjs          # tool call → TOOLCALL.txt
+  06-image.mjs         # vision (signed-out → skip)
+  07-temp-sonnet5.mjs  # Claude 5 temperature regression (see below)
+```
+
+Each stage exports `run(ctx)`; `ctx` carries `{ win, ui, key, region, targetModel, workDir,
+userDataDir, signedOut, checks, results }`. `ui.pickModel(name)` is shared by stages 03 and 07.
+
 ## What it verifies
 
 - VSIX installs into an isolated profile.
@@ -37,6 +62,16 @@ system VS Code install is required (any OS). Exit code: `0` = pass or skipped, `
 - **The Bedrock provider actually served the requests** — asserted from the on-disk
   `Bedrock Chat` output-channel log (`Using API key authentication` + streaming), so a
   stray Copilot/built-in model can never make the test pass by accident.
+- **Claude 5 temperature regression (#21)** — re-selects **Claude Sonnet 5** (`E2E_TEMP_MODEL`)
+  in the same session and sends a plain prompt. Bedrock rejects `temperature` for Claude 4+
+  models, so the stage classifies from its own log delta: **PASS** = the request streamed with no
+  temperature `ValidationException` (the token echo is corroboration, not required). **SKIP** =
+  the Sonnet 5 row is genuinely absent from the Bedrock group in the model picker, or an IAM/SCP
+  deny short-circuits before request-body validation (so temperature can't be exercised). **FAIL** =
+  a temperature `ValidationException` (the #21 regression), a picker row that exists but cannot be
+  selected, or any other unexpected error — the stage fails fast and never turns an unknown error
+  into a green skip. For a real PASS, `E2E_REGION` must offer **both** the primary model and
+  Sonnet 5, and the key must be **authorized to invoke** Sonnet 5.
 - **Image / vision** — see the caveat below.
 
 ## The image / vision caveat
@@ -65,7 +100,8 @@ E2E_USER_DATA=/path/to/profile node run.mjs
 | `AWS_BEARER_TOKEN_BEDROCK` | — | Bedrock API key. From env or repo-root `../.env`. Absent → skip. |
 | `E2E_VSIX` | _(build from source)_ | Path to a prebuilt VSIX; skips the source build. |
 | `E2E_REGION` | `eu-central-1` | AWS region (must offer the model's inference profile). |
-| `E2E_MODEL` | `Claude Haiku 4.5` | Model display name to select. |
+| `E2E_MODEL` | `Claude Haiku 4.5` | Primary model display name to select. |
+| `E2E_TEMP_MODEL` | `Claude Sonnet 5` | Claude 4+ model for the temperature-regression stage; must be available in `E2E_REGION` or the stage skips. |
 | `E2E_VSCODE_VERSION` | `1.122.1` | Pinned VS Code version to download. |
 | `E2E_VSCODE_PATH` | — | Use a system VS Code executable instead of downloading (faster locally). |
 | `E2E_REUSE_PROFILE` | — | `1` = copy the local VS Code profile (for a signed-in image run). |
