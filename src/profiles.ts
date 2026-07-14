@@ -48,7 +48,8 @@ export function getModelProfile(modelId: string): ModelProfile {
 	switch (provider) {
 		case 'anthropic': {
 			// Claude 4+ models have deprecated the temperature parameter
-			const isClaudeV4OrNewer = /claude-(opus|sonnet|haiku)-4/.test(modelId);
+			const claudeVersionMatch = modelId.match(/claude-(?:opus|sonnet|haiku)-(\d+)/);
+			const isClaudeV4OrNewer = claudeVersionMatch !== null && Number(claudeVersionMatch[1]) >= 4;
 			return {
 				supportsToolChoice: true,
 				toolResultFormat: 'text',
