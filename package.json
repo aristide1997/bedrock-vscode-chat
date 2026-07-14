@@ -93,6 +93,44 @@
 					"additionalProperties": {
 						"type": "string"
 					}
+				},
+				"languageModelChatProvider.bedrock.manualModels": {
+					"type": "array",
+					"title": "Manual Models",
+					"default": [],
+					"markdownDescription": "Manually declared Bedrock models. Use this when the environment blocks `bedrock:ListFoundationModels` / `bedrock:ListInferenceProfiles` (e.g. a restrictive Service Control Policy) but still allows Converse/InvokeModel, or to pin an explicit set of models. If auto-discovery fails and this list is non-empty, the extension falls back to these models instead of erroring; otherwise entries are merged with discovered models.",
+					"items": {
+						"type": "object",
+						"required": ["id"],
+						"additionalProperties": false,
+						"properties": {
+							"id": {
+								"type": "string",
+								"description": "Bare model ID, e.g. \"anthropic.claude-opus-4-8\"."
+							},
+							"name": {
+								"type": "string",
+								"description": "Display name shown in the model picker. Defaults to the id."
+							},
+							"inferenceProfile": {
+								"type": "string",
+								"description": "Inference profile ID or ARN to invoke instead of the bare id (e.g. \"global.anthropic.claude-opus-4-8\"). Most cross-region models require this."
+							},
+							"vision": {
+								"type": "boolean",
+								"default": false,
+								"description": "Whether the model accepts image input."
+							},
+							"maxInputTokens": {
+								"type": "number",
+								"description": "Optional context-window override (input tokens)."
+							},
+							"maxOutputTokens": {
+								"type": "number",
+								"description": "Optional max output tokens."
+							}
+						}
+					}
 				}
 			}
 		},

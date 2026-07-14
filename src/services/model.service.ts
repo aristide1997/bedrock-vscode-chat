@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { LanguageModelChatInformation } from "vscode";
-import type { BedrockModelSummary, AuthConfig } from "../types";
+import type { BedrockModelSummary, AuthConfig, ManualModel } from "../types";
 import { BedrockClient } from "../clients/bedrock.client";
 import { OpenRouterClient } from "./openrouter.client";
 import { AuthenticationService } from "./authentication.service";
@@ -48,6 +48,26 @@ export function resolveInvocationTarget(
 		candidates.find((pid) => pid.startsWith("global.")) ??
 		candidates[0]
 	);
+}
+
+/**
+ * Convert a user-declared ManualModel into the BedrockModelSummary shape the
+ * rest of the pipeline expects. Manual models are assumed streaming + TEXT so
+ * they survive the capability filter; vision is opt-in.
+ */
+export function manualModelToSummary(mm: ManualModel): BedrockModelSummary {
+	return {
+		modelArn: "",
+		modelId: mm.id,
+		modelName: mm.name ?? mm.id,
+		providerName: mm.id.split(".")[0] || "Bedrock",
+		inputModalities: mm.vision ? ["TEXT", "IMAGE"] : ["TEXT"],
+		outputModalities: ["TEXT"],
+		responseStreamingSupported: true,
+		customizationsSupported: [],
+		inferenceTypesSupported: ["INFERENCE_PROFILE"],
+		modelLifecycle: { status: "ACTIVE" },
+	};
 }
 
 /**
@@ -100,6 +120,8 @@ export class ModelService {
 		let models: BedrockModelSummary[];
 		let availableProfileIds: Set<string>;
 
+		const manualModels = this.configService.getManualModels();
+
 		try {
 			const credentials = this.authService.getCredentials(authConfig);
 			[models, availableProfileIds] = await Promise.all([
@@ -109,14 +131,44 @@ export class ModelService {
 		} catch (err) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			logger.error("[Model Service] Failed to fetch models", err);
-			if (!silent) {
-				vscode.window.showErrorMessage(`Failed to fetch Bedrock models: ${errorMsg}`);
+			// If the user has declared models manually, prefer degrading to those
+			// over failing outright — this keeps the extension usable where model
+			// listing is blocked (e.g. an SCP deny) but invocation is allowed.
+			if (manualModels.length === 0) {
+				if (!silent) {
+					vscode.window.showErrorMessage(`Failed to fetch Bedrock models: ${errorMsg}`);
+				}
+				return [];
 			}
-			return [];
+			logger.log(
+				`[Model Service] Model listing unavailable; falling back to ${manualModels.length} manually configured model(s).`
+			);
+			models = [];
+			availableProfileIds = new Set<string>();
+		}
+
+		// Merge manually-declared models with anything discovered. Manual entries
+		// fill gaps (by bare model ID) without clobbering discovered metadata.
+		const manualById = new Map(manualModels.map((mm) => [mm.id, mm]));
+		if (manualModels.length > 0) {
+			const discovered = new Set(models.map((m) => m.modelId));
+			for (const mm of manualModels) {
+				if (!discovered.has(mm.id)) {
+					models.push(manualModelToSummary(mm));
+				}
+			}
 		}
 
 		const infos: LanguageModelChatInformation[] = [];
-		const overrides = this.configService.getInferenceProfileOverrides();
+		// A manual model's inferenceProfile acts like an implicit override, so
+		// routing works even when ListInferenceProfiles returned nothing. Explicit
+		// user overrides still win.
+		const overrides: Record<string, string> = { ...this.configService.getInferenceProfileOverrides() };
+		for (const mm of manualModels) {
+			if (mm.inferenceProfile && !(mm.id in overrides)) {
+				overrides[mm.id] = mm.inferenceProfile;
+			}
+		}
 		this.invocationTargets.clear();
 
 		for (const m of models) {
@@ -131,10 +183,13 @@ export class ModelService {
 
 			const hasInferenceProfile = this.invocationTargets.has(m.modelId);
 
-			// Try to get model properties from OpenRouter, fall back to defaults
+			// Try to get model properties from OpenRouter, fall back to defaults.
+			// An explicit manual override takes precedence over both (useful when
+			// OpenRouter is unreachable in a locked-down network).
+			const manual = manualById.get(m.modelId);
 			const properties = await this.openRouterClient.getModelProperties(m.modelId);
-			const maxInput = properties?.contextLength ?? DEFAULT_CONTEXT_LENGTH;
-			const maxOutput = properties?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+			const maxInput = manual?.maxInputTokens ?? properties?.contextLength ?? DEFAULT_CONTEXT_LENGTH;
+			const maxOutput = manual?.maxOutputTokens ?? properties?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 			const vision = m.inputModalities.includes("IMAGE");
 
 			const modelInfo: LanguageModelChatInformation = {
