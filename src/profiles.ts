@@ -47,13 +47,14 @@ export function getModelProfile(modelId: string): ModelProfile {
 	// Provider-specific profiles
 	switch (provider) {
 		case 'anthropic': {
-			// Claude 4+ models have deprecated the temperature parameter
-			const claudeVersionMatch = modelId.match(/claude-(?:opus|sonnet|haiku)-(\d+)/);
-			const isClaudeV4OrNewer = claudeVersionMatch !== null && Number(claudeVersionMatch[1]) >= 4;
+			// Claude 4+ deprecated `temperature` (Bedrock rejects requests that send it). Fail closed:
+			// only known legacy shapes still accept it; new/unrecognized IDs get it omitted, which is
+			// harmless, while sending it to a 4+ model fails every request.
+			const isLegacyTemperatureModel = /claude-3[-.:]|claude-v2|claude-instant/.test(modelId);
 			return {
 				supportsToolChoice: true,
 				toolResultFormat: 'text',
-				supportsTemperature: !isClaudeV4OrNewer,
+				supportsTemperature: isLegacyTemperatureModel,
 			};
 		}
 
