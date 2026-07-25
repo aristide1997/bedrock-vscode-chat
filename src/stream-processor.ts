@@ -2,6 +2,40 @@ import * as vscode from "vscode";
 import { ToolCallBufferManager } from "./tool-buffer";
 import { logger } from "./logger";
 
+/**
+ * Bedrock ConverseStream exception events surface in-band as members on the
+ * stream event union rather than throwing. Consumers must inspect for these
+ * or a mid-stream throttle / model error is silently discarded — the caller
+ * sees the assistant turn simply end.
+ *
+ * https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html
+ */
+const STREAM_EXCEPTION_EVENTS = [
+	"internalServerException",
+	"modelStreamErrorException",
+	"validationException",
+	"throttlingException",
+	"serviceUnavailableException",
+] as const;
+
+type StreamExceptionEvent = (typeof STREAM_EXCEPTION_EVENTS)[number];
+
+interface BedrockExceptionPayload {
+	message?: string;
+}
+
+function extractExceptionEvent(
+	event: Record<string, unknown>
+): { type: StreamExceptionEvent; payload: BedrockExceptionPayload } | undefined {
+	for (const t of STREAM_EXCEPTION_EVENTS) {
+		const payload = event[t];
+		if (payload) {
+			return { type: t, payload: payload as BedrockExceptionPayload };
+		}
+	}
+	return undefined;
+}
+
 export class StreamProcessor {
 	private toolBuffer: ToolCallBufferManager;
 
@@ -55,6 +89,38 @@ export class StreamProcessor {
 					await this.toolBuffer.tryEmit(idx, progress, true);
 				} else if (event.messageStop) {
 					await this.toolBuffer.emitAll(progress, event.messageStop.stopReason);
+				} else if (event.messageStart || event.metadata) {
+					// messageStart carries only role; metadata carries token usage. Nothing
+					// to emit downstream today, but log so future work can wire them up
+					// without first having to discover they exist.
+					if (event.metadata) {
+						logger.log("[StreamProcessor] metadata", {
+							usage: event.metadata.usage,
+							metrics: event.metadata.metrics,
+						});
+					}
+				} else {
+					const exception = extractExceptionEvent(event as Record<string, unknown>);
+					if (exception) {
+						const message = exception.payload?.message ?? "unknown error";
+						logger.error("[StreamProcessor] Bedrock stream exception", {
+							type: exception.type,
+							message,
+						});
+						progress.report(
+							new vscode.LanguageModelTextPart(
+								`\n[Bedrock] ${exception.type}: ${message}`
+							)
+						);
+						// Abort the turn. The outer catch preserves cancellation semantics
+						// (suppressed when token.isCancellationRequested), so this surfaces
+						// only when the user has not cancelled.
+						throw new Error(`Bedrock stream ${exception.type}: ${message}`);
+					} else {
+						logger.warn("[StreamProcessor] Unhandled event type", {
+							keys: Object.keys(event),
+						});
+					}
 				}
 			}
 		} catch (err) {
