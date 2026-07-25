@@ -156,7 +156,10 @@ export class ModelService {
 
 		this.chatEndpoints = infos.map((info) => ({
 			model: info.id,
-			modelMaxPromptTokens: info.maxInputTokens + info.maxOutputTokens,
+			// modelMaxPromptTokens is the prompt budget only. Adding maxOutputTokens
+			// overstated it by the output allowance and delayed VS Code's conversation
+			// compaction, pushing individual requests past the model's real limit.
+			modelMaxPromptTokens: info.maxInputTokens,
 		}));
 
 		return infos;
