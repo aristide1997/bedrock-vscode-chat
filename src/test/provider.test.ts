@@ -477,6 +477,46 @@ suite("Bedrock Chat Provider Extension", () => {
 			assert.equal(withStopArray.inferenceConfig!.topP, undefined, "no topP when not provided");
 		});
 
+		test("maxTokens precedence: modelOptions.max_tokens > userMaxOutputTokens > default, clamped by model", () => {
+			const bigModel = { id: "anthropic.claude-opus-4-8", maxOutputTokens: 128000 };
+			const smallModel = { id: "small", maxOutputTokens: 2048 };
+
+			// (a) default (4096) applies when neither modelOptions nor user setting is present
+			const defaultReq = buildRequestInput({
+				model: bigModel, converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(bigModel.id), toolConfig: undefined,
+			});
+			assert.equal(defaultReq.inferenceConfig!.maxTokens, 4096);
+
+			// (b) user setting overrides the default when modelOptions is absent
+			const userReq = buildRequestInput({
+				model: bigModel, converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(bigModel.id), toolConfig: undefined,
+				userMaxOutputTokens: 32768,
+			});
+			assert.equal(userReq.inferenceConfig!.maxTokens, 32768);
+
+			// (c) modelOptions.max_tokens beats both
+			const optsReq = buildRequestInput({
+				model: bigModel, converted: baseConverted,
+				options: { modelOptions: { max_tokens: 8192 } } as unknown as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(bigModel.id), toolConfig: undefined,
+				userMaxOutputTokens: 32768,
+			});
+			assert.equal(optsReq.inferenceConfig!.maxTokens, 8192);
+
+			// (d) model.maxOutputTokens clamps a too-large user setting
+			const clampReq = buildRequestInput({
+				model: smallModel, converted: baseConverted,
+				options: {} as vscode.LanguageModelChatRequestHandleOptions,
+				profile: getModelProfile(smallModel.id), toolConfig: undefined,
+				userMaxOutputTokens: 32768,
+			});
+			assert.equal(clampReq.inferenceConfig!.maxTokens, 2048);
+		});
+
 		test("includes system + toolConfig only when present", () => {
 			const withSystem = buildRequestInput({
 				model, converted: { messages: baseConverted.messages, system: [{ text: "be terse" }] },

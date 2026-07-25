@@ -120,7 +120,14 @@ export class ChatRequestHandler {
 				throw new Error("Message exceeds token limit.");
 			}
 
-			const requestInput = buildRequestInput({ model, converted, options, profile, toolConfig });
+			const requestInput = buildRequestInput({
+				model,
+				converted,
+				options,
+				profile,
+				toolConfig,
+				userMaxOutputTokens: this.configService.getMaxOutputTokens(),
+			});
 
 			// Substitute invocation target (override ARN or system profile) at the wire level.
 			// This keeps the bare model ID for getModelProfile() so capability detection

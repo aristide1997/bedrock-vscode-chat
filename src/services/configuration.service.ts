@@ -73,4 +73,19 @@ export class ConfigurationService {
 		const config = vscode.workspace.getConfiguration(this.configSection);
 		return config.get<Record<string, string>>('inferenceProfileOverrides') ?? {};
 	}
+
+	/**
+	 * Preferred maxTokens for the ConverseStream inferenceConfig. The caller
+	 * still clamps this by the model's own reported maximum, so returning a
+	 * value greater than the model supports is harmless. A positive finite
+	 * number is required; anything else falls back to the default.
+	 */
+	getMaxOutputTokens(): number {
+		const config = vscode.workspace.getConfiguration(this.configSection);
+		const raw = config.get<number>('maxOutputTokens');
+		if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+			return Math.floor(raw);
+		}
+		return 32768;
+	}
 }

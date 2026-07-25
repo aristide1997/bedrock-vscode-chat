@@ -93,6 +93,13 @@
 					"additionalProperties": {
 						"type": "string"
 					}
+				},
+				"languageModelChatProvider.bedrock.maxOutputTokens": {
+					"type": "number",
+					"description": "Maximum output tokens to request per turn. Clamped by the model's own reported maximum, so setting a value higher than the model supports has no effect. Raising this lets tools that emit large arguments (create_file, replace_string_in_file, MCP tools carrying documents) finish without mid-stream truncation.",
+					"title": "Max Output Tokens",
+					"default": 32768,
+					"minimum": 1
 				}
 			}
 		},

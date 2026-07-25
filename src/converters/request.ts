@@ -15,14 +15,22 @@ export function buildRequestInput(params: {
 	options: LanguageModelChatRequestHandleOptions;
 	profile: ModelProfile;
 	toolConfig: unknown;
+	userMaxOutputTokens?: number;
 }): ConverseStreamCommandInput {
-	const { model, converted, options, profile, toolConfig } = params;
+	const { model, converted, options, profile, toolConfig, userMaxOutputTokens } = params;
+
+	// Precedence: caller-supplied modelOptions.max_tokens -> user setting -> 4096 default,
+	// all clamped by the model's reported maximum so smaller models still receive a legal value.
+	const requestedMaxTokens =
+		(options.modelOptions?.max_tokens as number | undefined) ||
+		userMaxOutputTokens ||
+		4096;
 
 	const requestInput: ConverseStreamCommandInput = {
 		modelId: model.id,
 		messages: converted.messages as any,
 		inferenceConfig: {
-			maxTokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
+			maxTokens: Math.min(requestedMaxTokens, model.maxOutputTokens),
 			// Temperature must be omitted for models that have deprecated it (e.g. Claude 4+)
 			...(profile.supportsTemperature && {
 				temperature: options.modelOptions?.temperature ?? 0.7,
