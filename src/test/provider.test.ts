@@ -385,6 +385,95 @@ suite("Bedrock Chat Provider Extension", () => {
 			await buffer.tryEmit(2, progress);
 			assert.equal(emitted.length, 2);
 		});
+
+		test("empty args + force + stopReason=tool_use emits {} (parameterless tool)", async () => {
+			// Reproduces Copilot's auto-generated `activate_*_tools` grouping calls:
+			// Bedrock signals a genuine parameterless tool with zero toolUse.input deltas.
+			const buffer = new ToolCallBufferManager();
+			const emitted: vscode.LanguageModelResponsePart[] = [];
+			const progress = { report: (p: vscode.LanguageModelResponsePart) => emitted.push(p) };
+
+			buffer.startToolCall(0, "call_x", "activate_notion_database_management_tools");
+			await buffer.emitAll(progress, "tool_use");
+
+			assert.equal(emitted.length, 1);
+			assert.ok(emitted[0] instanceof vscode.LanguageModelToolCallPart);
+			assert.deepEqual((emitted[0] as vscode.LanguageModelToolCallPart).input, {});
+		});
+
+		test("empty args + force + stopReason=max_tokens reports text, emits no tool call", async () => {
+			// Truncation before the first delta: emitting {} here would silently execute
+			// the tool with no args (unsafe for create_file etc.), so surface the failure
+			// to the user via a text part instead.
+			const buffer = new ToolCallBufferManager();
+			const emitted: vscode.LanguageModelResponsePart[] = [];
+			const progress = { report: (p: vscode.LanguageModelResponsePart) => emitted.push(p) };
+
+			buffer.startToolCall(0, "call_y", "create_file");
+			await buffer.emitAll(progress, "max_tokens");
+
+			assert.equal(emitted.length, 1);
+			assert.ok(emitted[0] instanceof vscode.LanguageModelTextPart);
+			const text = (emitted[0] as vscode.LanguageModelTextPart).value;
+			assert.ok(text.includes("create_file"));
+			assert.ok(text.includes("max_tokens"));
+			assert.ok(!emitted.some((p) => p instanceof vscode.LanguageModelToolCallPart));
+		});
+
+		test("empty args + no stopReason (contentBlockStop path) defers, buffer retained", async () => {
+			// tryEmit is called at contentBlockStop before messageStop arrives with the
+			// stopReason. If the buffer is empty at that point, we must not log or report —
+			// messageStop -> emitAll will make the call with the reason available.
+			const buffer = new ToolCallBufferManager();
+			const emitted: vscode.LanguageModelResponsePart[] = [];
+			const progress = { report: (p: vscode.LanguageModelResponsePart) => emitted.push(p) };
+
+			buffer.startToolCall(0, "call_z", "activate_x");
+			await buffer.tryEmit(0, progress, true); // no stopReason
+			assert.equal(emitted.length, 0, "must not emit or report on the contentBlockStop path");
+
+			// emitAll with stopReason=tool_use should still emit — buffer wasn't cleared.
+			await buffer.emitAll(progress, "tool_use");
+			assert.equal(emitted.length, 1);
+			assert.ok(emitted[0] instanceof vscode.LanguageModelToolCallPart);
+		});
+
+		test("truncated JSON is reported once, not twice, and buffer is removed", async () => {
+			// contentBlockStop calls tryEmit(force=true) with truncated JSON, then messageStop
+			// calls emitAll. Prior to the fix, the failure was logged AND reported twice.
+			const buffer = new ToolCallBufferManager();
+			const emitted: vscode.LanguageModelResponsePart[] = [];
+			const progress = { report: (p: vscode.LanguageModelResponsePart) => emitted.push(p) };
+
+			buffer.startToolCall(0, "call_t", "create_file");
+			buffer.appendArgs(0, '{"filePath": "/tmp/x.md"'); // valid-so-far, but not a complete object
+
+			await buffer.tryEmit(0, progress, true); // contentBlockStop path (no stopReason)
+			await buffer.emitAll(progress, "max_tokens"); // messageStop path
+
+			// Exactly one text report, no tool call, buffer removed from map.
+			const textReports = emitted.filter((p) => p instanceof vscode.LanguageModelTextPart);
+			assert.equal(textReports.length, 1, "must report exactly once");
+			assert.ok(!emitted.some((p) => p instanceof vscode.LanguageModelToolCallPart));
+		});
+
+		test("partial JSON accumulating to valid JSON still emits early (regression guard)", async () => {
+			// Early-emission behaviour is deliberate — verify the empty/stopReason
+			// changes did not disturb it.
+			const buffer = new ToolCallBufferManager();
+			const emitted: vscode.LanguageModelResponsePart[] = [];
+			const progress = { report: (p: vscode.LanguageModelResponsePart) => emitted.push(p) };
+
+			buffer.startToolCall(0, "call_e", "tool");
+			buffer.appendArgs(0, '{"a":');
+			await buffer.tryEmit(0, progress);
+			assert.equal(emitted.length, 0);
+
+			buffer.appendArgs(0, '1}');
+			await buffer.tryEmit(0, progress); // no force, no stopReason — must still emit
+			assert.equal(emitted.length, 1);
+			assert.deepEqual((emitted[0] as vscode.LanguageModelToolCallPart).input, { a: 1 });
+		});
 	});
 
 	suite("proxy", () => {

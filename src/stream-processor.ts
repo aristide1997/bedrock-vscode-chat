@@ -54,7 +54,7 @@ export class StreamProcessor {
 					const idx = event.contentBlockStop.contentBlockIndex ?? 0;
 					await this.toolBuffer.tryEmit(idx, progress, true);
 				} else if (event.messageStop) {
-					await this.toolBuffer.emitAll(progress);
+					await this.toolBuffer.emitAll(progress, event.messageStop.stopReason);
 				}
 			}
 		} catch (err) {
