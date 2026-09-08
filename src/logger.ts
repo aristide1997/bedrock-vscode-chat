@@ -117,6 +117,17 @@ class Logger {
 		this.logToChannel('DEBUG', args);
 		this.logToConsole('debug', args);
 	}
+
+	/**
+	 * Reveal the output channel.
+	 *
+	 * Here rather than in each caller so error-handling code does not need its own
+	 * reference to the channel, and so a "Show Logs" action is a no-op instead of a
+	 * crash before initialize() has run.
+	 */
+	show(): void {
+		this.outputChannel?.show(true);
+	}
 }
 
 export const logger = new Logger();

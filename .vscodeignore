@@ -20,3 +20,5 @@ CLAUDE.md
 **/*.ts
 **/*.vsix
 assets/demo.gif
+docs/**
+scripts/**

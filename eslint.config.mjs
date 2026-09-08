@@ -7,6 +7,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import stylistic from '@stylistic/eslint-plugin';
+import globals from 'globals';
 
 export default tseslint.config(
 	{
@@ -47,6 +48,19 @@ export default tseslint.config(
 					'argsIgnorePattern': '^_'
 				}
 			]
+		}
+	},
+	{
+		// Standalone CommonJS Node scripts, not part of the extension bundle. They
+		// legitimately use require(), console and process, none of which exist in
+		// the default (browser-ish) globals the TS config assumes.
+		files: ['scripts/**/*.js'],
+		languageOptions: {
+			globals: globals.node,
+			sourceType: 'commonjs'
+		},
+		rules: {
+			'@typescript-eslint/no-require-imports': 'off'
 		}
 	}
 );

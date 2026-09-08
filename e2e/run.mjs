@@ -15,8 +15,9 @@ import * as text from './stages/04-text.mjs';
 import * as tool from './stages/05-tool.mjs';
 import * as image from './stages/06-image.mjs';
 import * as sonnet5 from './stages/07-temp-sonnet5.mjs';
+import * as thinkingDefaults from './stages/08-thinking-defaults.mjs';
 
-const STAGES = [auth, models, selectModel, text, tool, image, sonnet5];
+const STAGES = [auth, models, selectModel, text, tool, image, sonnet5, thinkingDefaults];
 
 // Deterministic, CI-grade verification. Source of truth = the on-disk "Bedrock Chat" log +
 // captured per-stage results. No screenshots/DOM scraping in the pass/fail path.
@@ -63,6 +64,23 @@ function finalize(ctx) {
     else checks.add(`${s5Name} — ${reason}`, false);
   }
 
+  // Default install state: thinking on, maxOutputTokens left at 0. The regression this guards
+  // made every such request go out with maxTokens: 1, which Bedrock then rejected outright.
+  const td = results.thinkingDefaults;
+  const tdName = 'default settings + thinking produced a valid request (maxTokens not 1)';
+  if (!td) {
+    checks.skip('default-state thinking stage did not run');
+  } else {
+    const { verdict, reason } = thinkingDefaults.classify({
+      replyText: td.replyText,
+      delta: td.delta,
+      token: thinkingDefaults.TOKEN,
+    });
+    if (verdict === 'pass') checks.add(`${tdName} — ${reason}`, true);
+    else if (verdict === 'skip') checks.skip(`default-state thinking stage skipped (${reason})`);
+    else checks.add(`${tdName} — ${reason}`, false);
+  }
+
   return checks.report({ log });
 }
 
@@ -77,7 +95,7 @@ try {
     }
     await ctx.ui.shot('final');
     exitCode = finalize(ctx);
-    console.log('[harness] DONE (stages 01-07)');
+    console.log('[harness] DONE (stages 01-08)');
   }
 } catch (e) {
   console.error('[harness] FAILED:', e.message || e);

@@ -53,6 +53,9 @@ Select "default" in Settings → Language Model Chat Provider: Bedrock → Auth 
 - Vision/image input for compatible models (Claude, Amazon Nova, Pixtral) — see [Limitations](#limitations)
 - Support across AWS regions
 - Cross-region inference profiles for optimized model access and routing
+- [Extended thinking](#extended-thinking-reasoning) with a configurable effort level or token budget, settable [from the status bar or per conversation](#choosing-an-effort-level)
+- [Prompt caching](#prompt-caching) to cut the cost and latency of long sessions
+- [Token usage and context-size reporting](#token-usage-and-context-size) in the output channel
 
 ## Available Models
 
@@ -82,6 +85,14 @@ Configure the extension through VS Code settings (Cmd/Ctrl + , then search for "
 - **Session Token**: AWS Session Token for temporary credentials (optional, used with access-keys method)
 - **Inference Profile Overrides**: Map model IDs to [application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/application-inference-profiles.html) ARNs or IDs. Use this to route specific models through your own application inference profiles instead of the default system profiles.
 - **Manual Models**: Explicitly declare the models to expose. Primarily for environments where model **listing** is blocked (e.g. a Service Control Policy denies `bedrock:ListFoundationModels`) but **invocation** is allowed. See [Manual Models](#manual-models-for-restricted-environments) below.
+- **Max Output Tokens**: Cap on output tokens per response. `0` (the default) uses the model's own maximum. Only lower this if you want shorter answers — a low cap truncates large tool calls mid-JSON. See [Truncated tool calls](#truncated-tool-calls).
+- **Prompt Caching: Enabled**: Insert Bedrock prompt-cache checkpoints into requests. Default `true`. See [Prompt caching](#prompt-caching).
+- **Thinking: Enabled**: Request extended thinking from models that support it. Default `false`.
+- **Thinking: Effort**: `low`, `medium` (default), `high`, or `xhigh`. This is the global default; see [Choosing an effort level](#choosing-an-effort-level).
+- **Thinking: Show Effort Variants In Model Picker**: List each reasoning model once per effort level in the chat model picker, so effort can be set per conversation. Default `false`.
+- **Thinking: Budget Tokens**: Explicit reasoning budget for models on the older budget-based API. `0` (the default) derives it from the effort level.
+- **Thinking: Display**: `native` (default), `text`, or `hidden`. See [Extended thinking](#extended-thinking-reasoning).
+- **Native Token Counting**: Ask Bedrock to count input tokens before sending, instead of estimating from character counts. Default `true`. Accurate, but costs one extra API round trip per turn.
 
 #### Setting up Inference Profile Overrides
 
@@ -140,9 +151,96 @@ Fields: `id` (required, bare model ID); `name` (display name, defaults to `id`);
 > **Tip:** verify a model ID is invocable before adding it, e.g.
 > `aws bedrock-runtime converse --model-id "global.anthropic.claude-opus-4-8" --messages '[{"role":"user","content":[{"text":"hi"}]}]' --inference-config '{"maxTokens":10}'`
 
+### Extended thinking (reasoning)
+
+Turn on **Thinking: Enabled** to have reasoning-capable Claude models think before they answer. The extension picks the right API for the model automatically:
+
+- **Claude 4.6 and newer** get the adaptive API: they choose their own budget from the **Thinking: Effort** level you set.
+- **Claude 3.7 through 4.5** get the older budget API. The budget comes from the effort level, or from **Thinking: Budget Tokens** if you set it, and is always clamped to leave room for the visible answer.
+- **Older models** ignore the setting entirely rather than failing the request.
+
+Enabling thinking also suppresses `temperature` and `topP`, and relaxes a forced tool choice to `auto`, because Anthropic rejects those alongside reasoning.
+
+**Thinking: Display** controls what you see:
+
+| Value | Behavior |
+| --- | --- |
+| `native` | Uses VS Code's thinking UI when the API is available, otherwise shows nothing. |
+| `text` | Always renders reasoning inline, inside a collapsed `<details>` block. |
+| `hidden` | Captures reasoning for the model's own use but shows none of it. |
+
+The `native` option depends on a VS Code API that is still proposed, and a Marketplace build cannot declare proposed APIs. The extension therefore detects it at runtime: on VS Code Insiders you get the real thinking UI, and on a stable build `native` shows nothing. Choose `text` if you want to read the reasoning on a stable build.
+
+Reasoning is signed by Bedrock and must be replayed verbatim on the follow-up turn that carries tool results, so the extension stores each turn's reasoning against the tool calls it produced and sends it back when those results arrive.
+
+#### Choosing an effort level
+
+Effort can be changed without opening settings, in two places:
+
+**The status bar**, bottom right, reads `Bedrock: think high` (or `think off`).
+
+![The status bar item](docs/screenshots/03-status-bar.png)
+
+Click it for a quick pick of `off` / `low` / `medium` / `high` / `xhigh`, with the current level ticked:
+
+![The thinking effort quick pick](docs/screenshots/05-effort-quick-pick.png)
+
+It writes the same **Thinking: Enabled** and **Thinking: Effort** settings the settings editor shows, so the two can never disagree. This is a **global default** — it applies to every conversation. Hide the item as you would any other: right-click the status bar and untick *Bedrock Thinking Effort*.
+
+**The chat model picker**, once **Thinking: Show Effort Variants In Model Picker** is on — the last entry in that quick pick toggles it, so you never need to open settings. Each reasoning-capable model then appears once plainly and once per level:
+
+![Effort variants in the chat model picker](docs/screenshots/04-model-picker.png)
+
+Because VS Code remembers the chosen model per conversation, picking a variant makes effort **per-conversation**: a `think xhigh` chat and a `think low` chat can run side by side. The plain entry has no suffix and inherits the status bar default.
+
+Precedence is simply: **a variant picked in the chat window wins; anything else falls back to the status bar default**, which can itself be off. The output channel records which applied, as `thinkingEffort` and `thinkingSource` on each turn.
+
+Models with no reasoning mode are never expanded — padding the list with entries that would be ignored on the wire is worse than not offering them. Below, Claude 3 Haiku and DeepSeek V3.2 stay single rows while the Claude 4.5+ models each gain four:
+
+| Variants off (the default) | Variants on |
+| --- | --- |
+| ![Model list with variants off](docs/screenshots/01-language-models-variants-off.png) | ![Model list with variants on](docs/screenshots/02-language-models-variants-on.png) |
+
+#### Curating which variants you see
+
+The variants are off by default because they multiply the length of a list people already know. Turning them on or off refreshes the picker immediately — no reload needed, and with them off the behaviour is exactly the status bar plus settings.
+
+If you want the per-conversation control but not all four levels, you do not have to accept the full list. Variants are ordinary models, so VS Code's own per-model visibility toggles apply: open **Manage Language Models** (the gear in the model picker, or *Chat: Manage Language Models*) and use the eye icons to hide the levels you never reach for. The second screenshot above is doing exactly that — `low` and `medium` are hidden, so the picker offers only `high` and `xhigh`.
+
+[docs/mockups/](docs/mockups/) records the alternatives that were considered and why this combination won.
+
+### Prompt caching
+
+[Bedrock prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) lets you pay a reduced rate for the parts of a request the model has already seen. It is on by default for models that support it, and does nothing for models that do not.
+
+Checkpoints are placed where they compound across a session:
+
+- **Tool schemas and the system prompt**, which are byte-identical on every turn of an agent session and are usually the largest fixed cost.
+- **The last two user messages.** Marking only the newest message would write a cache entry that the next request, whose prefix has already grown past it, could never read. Marking the previous one as well means each turn reads back the checkpoint the turn before it wrote.
+
+Anthropic allows four checkpoints, which is exactly what the above uses. Caching is skipped entirely when the prompt is below the model's minimum cacheable size, since a refused checkpoint is billed as an ordinary write and never read back.
+
+Cache reads and writes are reported per turn in the output channel. If you see checkpoints requested but no cache activity, the conversation is still too short to cache.
+
+### Token usage and context size
+
+Every turn writes a summary to the **Bedrock Chat** output channel (View → Output → Bedrock Chat), taken from Bedrock's own accounting rather than estimated:
+
+```
+[Usage] Turn complete { model: ..., stopReason: 'end_turn', inputTokens: 48213,
+  outputTokens: 912, cacheReadInputTokens: 46080, cacheWriteInputTokens: 0,
+  contextWindow: '48213/200000 (24.1%)', latencyMs: 3184, toolCalls: 2, cachePoints: 4 }
+[Usage] Session totals { turns: 12, inputTokens: 501233, outputTokens: 8104, ... }
+```
+
+You also get a warning when the context window passes 90% full, and when caching was requested but Bedrock reported no cache activity.
+
+Copilot's own context-window indicator is driven by the provider's token-count callback, which now counts tool calls, tool results and images instead of text alone, and prefers Bedrock's real tokenizer over a character estimate. See [Limitations](#limitations) for what still cannot be surfaced there.
+
 ### Commands
 
 - **Configure AWS Bedrock**: Quick access to Bedrock settings
+- **AWS Bedrock: Select Thinking Effort**: The status bar quick pick, also reachable from the command palette
 - **Change Bedrock Model**: Information about model selection
 - **Manage AWS Bedrock Provider**: Legacy configuration command (deprecated)
 
@@ -173,9 +271,53 @@ npm run compile
 
 Press F5 to launch an Extension Development Host.
 
+### Live feature test
+
+`npm test` is fully offline. To verify the streaming, caching, thinking and usage
+features against real Bedrock, run:
+
+```bash
+export AWS_BEARER_TOKEN_BEDROCK=...   # or AWS_PROFILE
+export AWS_REGION=us-west-2
+node scripts/live-feature-test.js
+```
+
+It loads the extension's own compiled modules and drives them end to end, asserting
+on Bedrock's actual responses: cache checkpoints reading back across turns, signed
+reasoning on both the adaptive and budget thinking APIs, a multi-kilobyte tool call
+arriving as parseable JSON, an effort variant chosen in the model picker decoding
+back to an invocable model ID, and usage/latency captured from the metadata event.
+It prints the tokens it spent. Roughly 8 API calls per run.
+
+`ONLY=<substring>` restricts it to matching tests. `EXT_DIR=<path>` points it at an
+installed extension directory instead of the repo build, to verify the artifact VS Code
+actually loaded. `STUB_THINKING_API=1` simulates the Insiders-only thinking API.
+
+Two behaviors are environment-dependent rather than defects: `bedrock:CountTokens`
+requires that IAM action (the extension falls back to estimation and remembers the
+rejection), and a cache checkpoint reports a read instead of a write when a prior run
+already populated it.
+
+## Troubleshooting
+
+### Truncated tool calls
+
+If the agent stops mid-task and the output channel shows `Invalid JSON for tool call`, the model's tool arguments were cut off before they formed valid JSON. The extension now reports this as a visible error naming the tool, instead of stopping silently. It deliberately does not try to repair the arguments: half of a file-edit call would apply a truncated replacement string and corrupt the file.
+
+The usual cause is the output-token ceiling. Check `stopReason` in the output channel:
+
+- **`max_tokens`** — the response hit its output limit. Raise **Max Output Tokens**, or ask for a smaller change. Note that the old flat 4096-token default is gone; modern Claude models now default to their real ceiling, which fixes most of these.
+- **anything else** — the model genuinely emitted malformed JSON. Retry the request. The partial arguments are logged so you can see what it was attempting.
+
+### Empty snippet in the error
+
+An `Invalid JSON for tool call` error with an empty snippet used to mean two chat requests were running at once and one wiped the other's half-accumulated arguments. Stream state is now per-request, so this should no longer occur. If you see it again, please open an issue with the output channel contents.
+
 ## Limitations
 
 - **Image/vision input requires being signed in to GitHub Copilot Chat.** When signed out (using Bedrock purely as a bring-your-own-key provider), VS Code's chat agent strips image attachments before they reach *any* model provider — so vision-capable Bedrock models will only receive the text. This is a VS Code Copilot Chat gate, not a limitation of this extension. Text and tool calling work either way.
+- **Usage details cannot be written into Copilot's own request log.** The finalized language-model provider API gives a provider no channel for feeding token counts, latency or cache statistics back into Copilot's Agent debug log. Everything the extension measures goes to the **Bedrock Chat** output channel instead. Copilot's context-window indicator is driven by the provider's token-count callback, which the extension supplies as accurately as it can.
+- **Native thinking display requires VS Code Insiders.** The thinking-part API is still proposed, and a Marketplace build cannot declare proposed APIs. Use **Thinking: Display** = `text` on a stable build.
 - Some models don't support streaming with tool calls simultaneously
 - Rate limits apply based on your AWS account settings
 

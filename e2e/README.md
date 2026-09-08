@@ -47,10 +47,13 @@ stages/
   05-tool.mjs          # tool call → TOOLCALL.txt
   06-image.mjs         # vision (signed-out → skip)
   07-temp-sonnet5.mjs  # Claude 5 temperature regression (see below)
+  08-thinking-defaults.mjs # default install state + thinking (see below)
 ```
 
 Each stage exports `run(ctx)`; `ctx` carries `{ win, ui, key, region, targetModel, workDir,
 userDataDir, signedOut, checks, results }`. `ui.pickModel(name)` is shared by stages 03 and 07.
+Stage 08 additionally patches `settings.json` on disk, which VS Code applies immediately — that
+is the "user changed a setting" path under test, and it avoids the settings UI's brittle selectors.
 
 ## What it verifies
 
@@ -72,6 +75,19 @@ userDataDir, signedOut, checks, results }`. `ui.pickModel(name)` is shared by st
   selected, or any other unexpected error — the stage fails fast and never turns an unknown error
   into a green skip. For a real PASS, `E2E_REGION` must offer **both** the primary model and
   Sonnet 5, and the key must be **authorized to invoke** Sonnet 5.
+- **Default install state with extended thinking** — sets `thinking.enabled` on at `high` effort
+  while leaving `maxOutputTokens` at its `0` default, which is the configuration that broke in the
+  field: `0` is documented as "use the model's maximum" but was selected with `??`, so it won the
+  precedence chain and every request went out with `maxTokens: 1`. Thinking then failed outright,
+  because no reasoning budget fits below Anthropic's 1024-token floor. The stage classifies from
+  its own log delta: **PASS** = the log's `Resolved output-token limit` line reports a sane
+  `maxTokens`, thinking was on, and the stream completed with the token echoed. **FAIL** =
+  `maxTokens` resolved below 1024 (the sentinel taken literally again), a
+  `max_tokens must be greater than thinking.budget_tokens` rejection, thinking silently not
+  enabled, or no resolution line at all. **SKIP** = an auth or model-access deny short-circuited
+  before the request body was built. Asserting on the resolution line rather than reply text alone
+  matters because `maxTokens: 1` still produces *a* reply — just a one-token one. Settings are
+  restored afterwards so later stages see the profile they expect.
 - **Image / vision** — see the caveat below.
 
 ## The image / vision caveat

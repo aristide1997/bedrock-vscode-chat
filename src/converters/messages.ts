@@ -2,11 +2,11 @@ import * as vscode from "vscode";
 import type {
 	BedrockMessage,
 	BedrockContentBlock,
-	BedrockTextBlock,
 	BedrockImageBlock,
 	BedrockToolUseBlock,
 	BedrockToolResultBlock,
 	BedrockSystemBlock,
+	ReasoningBlock,
 } from "../types";
 import { logger } from "../logger";
 import { getModelProfile } from "../profiles";
@@ -21,13 +21,40 @@ function isToolResultPart(value: unknown): value is { callId: string; content?: 
 	return hasCallId && hasContent;
 }
 
-function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }): string {
+/**
+ * Flatten a tool result's content into text.
+ *
+ * Handles more than plain text parts on purpose. Tools increasingly return
+ * structured payloads, and the previous text-only walk silently produced an
+ * empty string for those. Bedrock rejects an empty toolResult, so a tool that
+ * returned only structured data would fail the whole turn.
+ */
+export function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }): string {
 	let text = "";
 	for (const c of pr.content ?? []) {
 		if (c instanceof vscode.LanguageModelTextPart) {
 			text += c.value;
 		} else if (typeof c === "string") {
 			text += c;
+		} else if (c && typeof c === "object") {
+			const obj = c as Record<string, unknown>;
+			// LanguageModelTextPart from a different extension-host realm fails the
+			// instanceof check, so fall back to its shape.
+			if (typeof obj.value === "string") {
+				text += obj.value;
+			} else if (typeof obj.text === "string") {
+				text += obj.text;
+			} else if ("data" in obj && typeof obj.mimeType === "string") {
+				// Binary tool output cannot go into a text block; describe it instead
+				// of emitting nothing.
+				text += `[${obj.mimeType} data]`;
+			} else {
+				try {
+					text += JSON.stringify(obj);
+				} catch {
+					// Circular or otherwise unserializable: skip rather than throw.
+				}
+			}
 		}
 	}
 	return text;
@@ -64,9 +91,20 @@ export function detectImageFormat(bytes: Uint8Array | undefined, mimeType: strin
 	return subtype === 'jpg' ? 'jpeg' : subtype;
 }
 
+export interface ConvertMessagesOptions {
+	/**
+	 * Reasoning blocks captured from earlier turns, keyed by a toolUseId that the
+	 * turn produced. Bedrock requires signed reasoning to be replayed verbatim on
+	 * the follow-up request when extended thinking is combined with tool use, so
+	 * whichever assistant message carries that toolUse gets its reasoning restored.
+	 */
+	reasoningByToolUseId?: ReadonlyMap<string, ReasoningBlock[]>;
+}
+
 export function convertMessages(
 	messages: readonly vscode.LanguageModelChatRequestMessage[],
-	modelId: string
+	modelId: string,
+	options: ConvertMessagesOptions = {}
 ): {
 	messages: BedrockMessage[];
 	system: BedrockSystemBlock[];
@@ -135,7 +173,9 @@ export function convertMessages(
 						content = [{ text: resultText }];
 					}
 				} else {
-					content = [{ text: resultText }];
+					// Bedrock rejects an empty text block, so substitute a marker when a
+					// tool genuinely produced nothing.
+					content = [{ text: resultText.length > 0 ? resultText : "(no output)" }];
 				}
 
 				toolResults.push({
@@ -150,6 +190,9 @@ export function convertMessages(
 		let emittedAssistantToolCall = false;
 		if (toolCalls.length > 0 && m.role === vscode.LanguageModelChatMessageRole.Assistant) {
 			const content: BedrockContentBlock[] = [];
+			// Reasoning has to lead the message; Anthropic rejects a thinking block
+			// that follows text or a tool use.
+			content.push(...replayReasoning(toolCalls, options.reasoningByToolUseId));
 			const combinedText = textParts.join("");
 			if (combinedText) {
 				content.push({ text: combinedText });
@@ -160,6 +203,8 @@ export function convertMessages(
 			emittedAssistantToolCall = true;
 		}
 
+		const text = textParts.join("");
+
 		if (toolResults.length > 0) {
 			pendingToolResults.push(...toolResults);
 
@@ -169,12 +214,19 @@ export function convertMessages(
 				nextMessage.content.every(p => isToolResultPart(p));
 
 			if (!nextIsToolResultOnly && pendingToolResults.length > 0) {
-				bedrockMessages.push({ role: "user", content: pendingToolResults });
+				// Any text or images sharing this message ride along after the tool
+				// results. Previously they were dropped outright, which silently lost
+				// user instructions attached to a tool-result turn.
+				const content: BedrockContentBlock[] = [...pendingToolResults];
+				if (text) {
+					content.push({ text });
+				}
+				content.push(...imageBlocks);
+				bedrockMessages.push({ role: "user", content });
 				pendingToolResults = [];
 			}
 		}
 
-		const text = textParts.join("");
 		if ((text || imageBlocks.length > 0) && !emittedAssistantToolCall && toolResults.length === 0) {
 			if (m.role === vscode.LanguageModelChatMessageRole.User) {
 				const content: BedrockContentBlock[] = [];
@@ -198,5 +250,126 @@ export function convertMessages(
 		bedrockMessages.push({ role: "user", content: pendingToolResults });
 	}
 
-	return { messages: bedrockMessages, system: systemBlocks };
+	return { messages: reconcileToolBlocks(bedrockMessages), system: systemBlocks };
+}
+
+function replayReasoning(
+	toolCalls: BedrockToolUseBlock[],
+	reasoningByToolUseId: ReadonlyMap<string, ReasoningBlock[]> | undefined
+): BedrockContentBlock[] {
+	if (!reasoningByToolUseId || reasoningByToolUseId.size === 0) {
+		return [];
+	}
+	for (const call of toolCalls) {
+		const blocks = reasoningByToolUseId.get(call.toolUse.toolUseId);
+		if (!blocks || blocks.length === 0) {
+			continue;
+		}
+		return blocks.map((b) =>
+			b.redactedContent
+				? ({ reasoningContent: { redactedContent: b.redactedContent } } as BedrockContentBlock)
+				: ({
+						reasoningContent: {
+							reasoningText: { text: b.text, ...(b.signature ? { signature: b.signature } : {}) },
+						},
+					} as BedrockContentBlock)
+		);
+	}
+	return [];
+}
+
+/**
+ * Make tool_use and tool_result blocks pair up the way Bedrock demands.
+ *
+ * Bedrock answers a mismatch with a 400 that names neither the message nor the
+ * id, so the two failure modes are worth fixing here rather than debugging in
+ * the log:
+ *
+ * 1. A tool result whose tool_use is not in the immediately preceding assistant
+ *    message. This happens after Copilot edits or truncates history, or when the
+ *    provider dropped a malformed tool call earlier in the session. The result is
+ *    unanswerable, so it is dropped.
+ * 2. A tool_use with no matching result. Rather than let the request fail, a
+ *    synthetic error result is inserted so the model learns the call did not run
+ *    and can retry.
+ *
+ * Exported for direct unit testing.
+ */
+export function reconcileToolBlocks(messages: BedrockMessage[]): BedrockMessage[] {
+	const out: BedrockMessage[] = [];
+
+	for (const message of messages) {
+		if (message.role === "user") {
+			const prev = out[out.length - 1];
+			const availableIds = new Set<string>();
+			if (prev && prev.role === "assistant") {
+				for (const block of prev.content) {
+					if ("toolUse" in block) {
+						availableIds.add(block.toolUse.toolUseId);
+					}
+				}
+			}
+
+			const seen = new Set<string>();
+			const kept: BedrockContentBlock[] = [];
+			for (const block of message.content) {
+				if ("toolResult" in block) {
+					const id = block.toolResult.toolUseId;
+					if (!availableIds.has(id)) {
+						logger.warn("[Message Converter] Dropping orphan tool result", { toolUseId: id });
+						continue;
+					}
+					if (seen.has(id)) {
+						logger.warn("[Message Converter] Dropping duplicate tool result", { toolUseId: id });
+						continue;
+					}
+					seen.add(id);
+				}
+				kept.push(block);
+			}
+
+			// Answer any tool call the client never reported a result for.
+			for (const id of availableIds) {
+				if (!seen.has(id)) {
+					logger.warn("[Message Converter] Synthesizing missing tool result", { toolUseId: id });
+					kept.unshift({
+						toolResult: {
+							toolUseId: id,
+							content: [{ text: "Tool result unavailable." }],
+							status: "error",
+						},
+					});
+				}
+			}
+
+			if (kept.length > 0) {
+				out.push({ role: "user", content: kept });
+			}
+			continue;
+		}
+
+		out.push(message);
+	}
+
+	// A trailing assistant tool_use with nothing after it is invalid: Bedrock
+	// requires every tool call to be answered before the model is asked to
+	// continue. Append the results the client owed us.
+	const last = out[out.length - 1];
+	if (last && last.role === "assistant") {
+		const unanswered = last.content.filter((b): b is BedrockToolUseBlock => "toolUse" in b);
+		if (unanswered.length > 0) {
+			out.push({
+				role: "user",
+				content: unanswered.map((b) => ({
+					toolResult: {
+						toolUseId: b.toolUse.toolUseId,
+						content: [{ text: "Tool result unavailable." }],
+						status: "error" as const,
+					},
+				})),
+			});
+		}
+	}
+
+	return out;
 }

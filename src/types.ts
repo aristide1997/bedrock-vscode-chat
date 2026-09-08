@@ -30,7 +30,35 @@ export interface BedrockImageBlock {
 	};
 }
 
-export type BedrockContentBlock = BedrockTextBlock | BedrockImageBlock | BedrockToolUseBlock | BedrockToolResultBlock;
+/**
+ * Marks the end of a cacheable prefix. Everything before the block is eligible
+ * for Bedrock prompt caching, so an identical prefix on a later request is
+ * billed at the (much cheaper) cache-read rate instead of being re-processed.
+ */
+export interface BedrockCachePointBlock {
+	cachePoint: {
+		type: "default";
+	};
+}
+
+/**
+ * An assistant reasoning ("extended thinking") block. Bedrock returns these as
+ * `reasoningText` with an opaque `signature`, or as `redactedContent` when the
+ * reasoning was encrypted. Both must be replayed verbatim on later turns.
+ */
+export interface BedrockReasoningBlock {
+	reasoningContent:
+		| { reasoningText: { text: string; signature?: string } }
+		| { redactedContent: Uint8Array };
+}
+
+export type BedrockContentBlock =
+	| BedrockTextBlock
+	| BedrockImageBlock
+	| BedrockToolUseBlock
+	| BedrockToolResultBlock
+	| BedrockReasoningBlock
+	| BedrockCachePointBlock;
 
 /**
  * Bedrock Converse API message structure.
@@ -43,9 +71,7 @@ export interface BedrockMessage {
 /**
  * Bedrock system message structure.
  */
-export interface BedrockSystemBlock {
-	text: string;
-}
+export type BedrockSystemBlock = { text: string } | BedrockCachePointBlock;
 
 /**
  * Bedrock tool specification.
@@ -62,9 +88,7 @@ export interface BedrockToolSpec {
  * Bedrock tool configuration.
  */
 export interface BedrockToolConfig {
-	tools: Array<{
-		toolSpec: BedrockToolSpec;
-	}>;
+	tools: Array<{ toolSpec: BedrockToolSpec } | BedrockCachePointBlock>;
 	toolChoice?: {
 		auto?: Record<string, never>;
 		any?: Record<string, never>;
@@ -99,6 +123,62 @@ export interface ToolCallBuffer {
 	id?: string;
 	name?: string;
 	args: string;
+}
+
+/**
+ * A tool call whose streamed arguments never formed parseable JSON. Collected so
+ * the request handler can tell the user *which* call was lost and why, instead of
+ * the turn ending with no explanation.
+ */
+export interface ToolCallFailure {
+	index: number;
+	toolUseId?: string;
+	name?: string;
+	/** Length of everything that was received for the arguments. */
+	argsLength: number;
+	/** Leading fragment of the arguments, for diagnostics. */
+	snippet: string;
+}
+
+/**
+ * Token accounting returned by Bedrock on the `metadata` stream event.
+ * The two cache fields are only present for models with prompt caching enabled.
+ */
+export interface BedrockUsage {
+	inputTokens?: number;
+	outputTokens?: number;
+	totalTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheWriteInputTokens?: number;
+}
+
+/**
+ * A single assistant reasoning block captured off the response stream, kept so
+ * it can be replayed on the next turn (Bedrock requires it when extended
+ * thinking is combined with tool use).
+ */
+export interface ReasoningBlock {
+	text: string;
+	signature?: string;
+	redactedContent?: Uint8Array;
+}
+
+/**
+ * Everything the stream processor learned while draining one Bedrock response.
+ */
+export interface StreamResult {
+	/** Bedrock's reason for ending the turn, e.g. `end_turn`, `max_tokens`, `tool_use`. */
+	stopReason?: string;
+	usage?: BedrockUsage;
+	latencyMs?: number;
+	/** Tool calls whose arguments never parsed. Empty on a healthy stream. */
+	toolCallFailures: ToolCallFailure[];
+	emittedToolCalls: number;
+	textLength: number;
+	/** Reasoning blocks produced by this turn, in the order they arrived. */
+	reasoning: ReasoningBlock[];
+	/** IDs of the tool calls emitted from this turn. */
+	toolUseIds: string[];
 }
 
 /**

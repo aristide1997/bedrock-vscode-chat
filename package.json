@@ -131,7 +131,79 @@
 							}
 						}
 					}
-				}
+				},
+					"languageModelChatProvider.bedrock.maxOutputTokens": {
+						"type": "number",
+						"title": "Max Output Tokens (0 = model maximum)",
+						"default": 0,
+						"minimum": 0,
+						"markdownDescription": "**`0` means \"use the model's own maximum\"**, which is the recommended setting. Any other value is a hard cap on output tokens per response.\n\nA low cap truncates large tool calls part-way through their JSON arguments, so the model's edit fails with an invalid-arguments error. It also breaks extended thinking: reasoning tokens are paid for out of this limit, so the cap must exceed the reasoning budget plus room for an answer. With `#languageModelChatProvider.bedrock.thinking.enabled#` on, this is raised automatically when left at `0`, and a request whose explicit cap is too small for `#languageModelChatProvider.bedrock.thinking.effort#` is rejected up front with an explanation.\n\nRaise this above the detected maximum if your model supports more than the extension discovers."
+					},
+					"languageModelChatProvider.bedrock.promptCaching.enabled": {
+						"type": "boolean",
+						"title": "Enable Prompt Caching",
+						"default": true,
+						"markdownDescription": "Insert [Bedrock prompt-cache checkpoints](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) around the system prompt, the tool schemas and the most recent conversation turns. Long agent sessions resend the same prefix every turn, so caching it cuts both latency and cost substantially. Applied only to models known to support it, and skipped when the conversation is too short to be cacheable. Cache reads and writes are reported in the **Bedrock Chat** output channel."
+					},
+					"languageModelChatProvider.bedrock.thinking.enabled": {
+						"type": "boolean",
+						"title": "Enable Extended Thinking",
+						"default": false,
+						"markdownDescription": "Ask models that support extended thinking to reason before answering. Ignored by models without a reasoning mode. While active, `temperature` and `top_p` are omitted and a forced tool choice is relaxed to automatic, because the models reject those combinations.\n\nReasoning tokens are spent out of `#languageModelChatProvider.bedrock.maxOutputTokens#`, so that limit must cover the reasoning budget **and** the visible answer. Leaving it at `0` (the default) always works; an explicit cap that is too small for the chosen effort is reported before the request is sent."
+					},
+					"languageModelChatProvider.bedrock.thinking.effort": {
+						"type": "string",
+						"title": "Thinking Effort",
+						"default": "medium",
+						"enum": [
+							"low",
+							"medium",
+							"high",
+							"xhigh"
+						],
+						"enumDescriptions": [
+							"Least reasoning, lowest latency and cost.",
+							"Balanced reasoning for everyday work.",
+							"More reasoning for harder problems.",
+							"Maximum reasoning. Slowest and most expensive."
+						],
+						"markdownDescription": "How much reasoning to request. Newer models take this directly and choose their own token budget; older ones convert it into a budget, which `#languageModelChatProvider.bedrock.thinking.budgetTokens#` can override.\n\nHigher levels need a correspondingly higher `#languageModelChatProvider.bedrock.maxOutputTokens#`, because reasoning tokens come out of that limit: about 6k for `low`, 12k for `medium`, 20k for `high` and 37k for `xhigh`. Leave that setting at `0` and this is handled for you."
+					},
+					"languageModelChatProvider.bedrock.thinking.showEffortVariants": {
+						"type": "boolean",
+						"title": "Show Effort Variants In Model Picker",
+						"default": false,
+						"markdownDescription": "List each reasoning model once per effort level in the chat model picker, as `Claude Sonnet 4.6 · think high`. Picking one of these sets the effort for that conversation only, overriding `#languageModelChatProvider.bedrock.thinking.effort#`. A `· think off` entry is also listed while `#languageModelChatProvider.bedrock.thinking.enabled#` is on, which is the only way to turn reasoning off for a single conversation. Off by default because it multiplies the number of entries in the picker. The status bar item still sets the default used by the plain entries."
+					},
+					"languageModelChatProvider.bedrock.thinking.budgetTokens": {
+						"type": "number",
+						"title": "Thinking Budget Tokens (0 = derive from effort)",
+						"default": 0,
+						"minimum": 0,
+						"markdownDescription": "Explicit thinking token budget for models that use the older budget-based reasoning API. **`0` derives it from `#languageModelChatProvider.bedrock.thinking.effort#`**, which is recommended. Values below 1024 are raised to 1024, Anthropic's documented floor. The budget is always kept below `#languageModelChatProvider.bedrock.maxOutputTokens#` so the model still has room to answer, and that limit is raised to fit when it is left at `0`. Ignored by models that choose their own budget."
+					},
+					"languageModelChatProvider.bedrock.thinking.display": {
+						"type": "string",
+						"title": "Show Thinking",
+						"default": "native",
+						"enum": [
+							"native",
+							"text",
+							"hidden"
+						],
+						"enumDescriptions": [
+							"Use the editor's own thinking display where available, otherwise show nothing.",
+							"Always show reasoning, inside a collapsed block above the answer.",
+							"Never show reasoning."
+						],
+						"markdownDescription": "How to display reasoning output. `native` needs an editor build that can render thinking; on builds that cannot, it shows nothing, so choose `text` to see reasoning everywhere. Reasoning is captured for the model's own use either way."
+					},
+					"languageModelChatProvider.bedrock.nativeTokenCounting": {
+						"type": "boolean",
+						"title": "Use Bedrock Token Counting",
+						"default": true,
+						"markdownDescription": "Ask Bedrock to count a request's input tokens with the model's own tokenizer before sending it. Exact rather than estimated, at the cost of one extra API call per turn. Disable to rely on local estimation only."
+					}
 			}
 		},
 		"languageModelChatProviders": [
@@ -155,6 +227,16 @@
 				"command": "bedrock.configure",
 				"title": "Configure AWS Bedrock",
 				"category": "AWS Bedrock"
+			},
+			{
+				"command": "bedrock.selectThinkingEffort",
+				"title": "Select Thinking Effort",
+				"category": "AWS Bedrock"
+			},
+			{
+				"command": "bedrock.showConfiguration",
+				"title": "Show Effective Configuration",
+				"category": "AWS Bedrock"
 			}
 		]
 	},
@@ -175,6 +257,7 @@
 		"@aws-sdk/client-bedrock": "^3.716.0",
 		"@aws-sdk/client-bedrock-runtime": "^3.716.0",
 		"@aws-sdk/credential-providers": "^3.901.0",
+		"@smithy/node-http-handler": "^4.0.0",
 		"https-proxy-agent": "^7.0.0"
 	},
 	"devDependencies": {
@@ -188,6 +271,7 @@
 		"@vscode/test-electron": "^2.5.2",
 		"dotenv": "^17.2.3",
 		"eslint": "^9.13.0",
+		"globals": "^14.0.0",
 		"prettier": "^3.1.0",
 		"rimraf": "^6.0.1",
 		"typescript": "^5.9.2",
