@@ -300,9 +300,28 @@ suite("Bedrock Chat Provider Extension", () => {
 			}
 		});
 
-		test("unknown providers default to supportsTemperature === true", () => {
+		test("known legacy providers keep temperature", () => {
 			assert.equal(getModelProfile("cohere.command-r-v1:0").supportsTemperature, true);
 			assert.equal(getModelProfile("meta.llama3-70b-instruct-v1:0").supportsTemperature, true);
+			assert.equal(getModelProfile("ai21.jamba-1-5-large-v1:0").supportsTemperature, true);
+		});
+
+		test("unknown providers omit temperature (fail closed)", () => {
+			// Bedrock rejects requests that send temperature to models that don't accept it
+			// (e.g. "This model doesn't support the temperature field" for Kimi). Omitting it
+			// is harmless, so only known providers get it.
+			const unknownIds = [
+				"moonshotai.kimi-k3.1",
+				"us.moonshotai.kimi-k3",
+				"deepseek.v3.2",
+				"qwen.qwen3-coder-next",
+				"zai.glm-5",
+				"some-new-provider.model-v1:0",
+				"no-provider-prefix",
+			];
+			for (const id of unknownIds) {
+				assert.equal(getModelProfile(id).supportsTemperature, false, `expected supportsTemperature=false for ${id}`);
+			}
 		});
 
 		test("provider-routing matrix: full profile per provider, incl. regional prefixes", () => {
@@ -321,10 +340,12 @@ suite("Bedrock Chat Provider Extension", () => {
 				["amazon.nova-pro-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
 				["us.amazon.nova-lite-v1:0", { supportsToolChoice: true, toolResultFormat: 'text', supportsTemperature: true }],
 				["amazon.titan-text-express-v1", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
-				// cohere / meta / ai21: default profile
+				// cohere / meta / ai21: no tool choice, keep temperature
 				["cohere.command-r-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
 				["meta.llama3-70b-instruct-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
 				["ai21.jamba-1-5-large-v1:0", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: true }],
+				// unknown provider: default profile, temperature omitted
+				["moonshotai.kimi-k3.1", { supportsToolChoice: false, toolResultFormat: 'text', supportsTemperature: false }],
 			];
 			for (const [id, expected] of matrix) {
 				assert.deepEqual(getModelProfile(id), expected, `profile mismatch for ${id}`);
