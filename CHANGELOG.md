@@ -4,6 +4,12 @@ All notable changes to the AWS Bedrock Provider for GitHub Copilot Chat extensio
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- **Temperature sent to non-Anthropic models that reject it**: providers without a known profile (e.g. `moonshotai.kimi-*`) failed every request with "This model doesn't support the temperature field". The fail-closed gate from #26 now applies to all providers: only known providers (Claude 3.x and older, Mistral, Amazon, Cohere, Meta, AI21) receive `temperature`; unrecognized providers omit it.
+
 ## 0.0.6
 
 ### Fixed

@@ -13,7 +13,7 @@ export interface ModelProfile {
 	toolResultFormat: 'text' | 'json';
 	/**
 	 * Whether the model supports the temperature inference parameter
-	 * (Claude 4+ models have deprecated temperature)
+	 * (false for Claude 4+ and for unrecognized providers)
 	 */
 	supportsTemperature: boolean;
 }
@@ -24,11 +24,15 @@ export interface ModelProfile {
  * @returns Model profile with capabilities
  */
 export function getModelProfile(modelId: string): ModelProfile {
+	// Fail closed: only send `temperature` to providers known to accept it. Bedrock rejects
+	// requests that send it to models that don't (Claude 4+, Kimi, ...), while omitting it is
+	// harmless (the model's default applies). New/unrecognized providers therefore omit it.
 	const defaultProfile: ModelProfile = {
 		supportsToolChoice: false,
 		toolResultFormat: 'text',
-		supportsTemperature: true,
+		supportsTemperature: false,
 	};
+	const legacyProfile: ModelProfile = { ...defaultProfile, supportsTemperature: true };
 
 	// Split the model name into parts
 	let parts = modelId.split('.');
@@ -75,13 +79,13 @@ export function getModelProfile(modelId: string): ModelProfile {
 					supportsTemperature: true,
 				};
 			}
-			return defaultProfile;
+			return legacyProfile;
 
 		case 'cohere':
 		case 'meta':
 		case 'ai21':
 			// Older models don't support tool choice
-			return defaultProfile;
+			return legacyProfile;
 
 		default:
 			return defaultProfile;
